@@ -1,8 +1,10 @@
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { IncomingMessage } from "node:http";
 import {
   classifyProxyRoute,
   createProxyRequestListener,
+  incomingMessageToRequest,
 } from "../../src/proxy/proxy-server.js";
 
 describe("classifyProxyRoute", () => {
@@ -18,6 +20,27 @@ describe("classifyProxyRoute", () => {
     ["POST", "/v1/models", "method-not-allowed"],
   ])("classifies %s %s as %s", (method, pathname, expected) => {
     expect(classifyProxyRoute(method, pathname)).toBe(expected);
+  });
+});
+
+describe("incomingMessageToRequest", () => {
+  function fakeReq(headers: Record<string, string>): IncomingMessage {
+    return { url: "/v1/models", method: "GET", headers } as unknown as IncomingMessage;
+  }
+
+  it("should build the request URL from the client Host header", () => {
+    const request = incomingMessageToRequest(fakeReq({ host: "virtual.example" }), "127.0.0.1", 8787);
+    expect(new URL(request.url).hostname).toBe("virtual.example");
+  });
+
+  it("should fall back to the bind address without a Host header", () => {
+    const request = incomingMessageToRequest(fakeReq({}), "127.0.0.1", 8787);
+    expect(request.url).toBe("http://127.0.0.1:8787/v1/models");
+  });
+
+  it("should fall back to the bind address for an unparsable Host header", () => {
+    const request = incomingMessageToRequest(fakeReq({ host: "bad host" }), "127.0.0.1", 8787);
+    expect(request.url).toBe("http://127.0.0.1:8787/v1/models");
   });
 });
 

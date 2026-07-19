@@ -59,7 +59,9 @@ ${bold("OPTIONS")}
       --env-file <file>    .env file path for literal value redaction
   -p, --port <port>        Proxy port (default: 8787)
       --host <host>        Proxy bind host (default: 127.0.0.1)
-      --upstream <url>     Custom upstream URL (or REHYDRA_UPSTREAM env; overrides provider default)
+      --upstream <url>     Custom upstream URL, or host=url[,host=url...] for
+                           host-based routing ("*" = catch-all). Also read
+                           from REHYDRA_UPSTREAM. Overrides provider default
       --api-key <key>      LLM API key (or set LLM_API_KEY env var)
       --audit-log <file>   Append full request/response audit records (JSONL).
                            WARNING: stores original un-anonymized bodies.

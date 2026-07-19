@@ -208,7 +208,19 @@ export function incomingMessageToRequest(
   port: number,
   signal?: AbortSignal,
 ): Request {
-  const url = `http://${host}:${port}${req.url ?? "/"}`;
+  // Prefer the client-sent Host header so host-based upstream routing sees
+  // the virtual host, not the bind address. Fall back on invalid values
+  // (the header is untrusted input).
+  let url = `http://${host}:${port}${req.url ?? "/"}`;
+  if (req.headers.host !== undefined) {
+    const candidate = `http://${req.headers.host}${req.url ?? "/"}`;
+    try {
+      new URL(candidate);
+      url = candidate;
+    } catch {
+      // keep bind-address URL
+    }
+  }
   const headers = new Headers();
 
   for (const [key, value] of Object.entries(req.headers)) {

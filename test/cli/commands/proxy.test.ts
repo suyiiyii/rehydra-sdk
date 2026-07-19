@@ -200,6 +200,45 @@ describe("proxy command", () => {
       );
     });
 
+    it("should parse host=url pairs into a host-routing upstream map", async () => {
+      const exitCode = await startAndShutdown(
+        "auto",
+        makeOptions({
+          upstream:
+            "a.example=https://ua.example, b.example=https://ub.example ,*=https://uc.example",
+        }),
+      );
+      expect(exitCode).toBe(0);
+      expect(mockCreateRehydraProxy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream: undefined,
+          upstreams: {
+            "a.example": "https://ua.example",
+            "b.example": "https://ub.example",
+            "*": "https://uc.example",
+          },
+          provider: "auto",
+        }),
+      );
+    });
+
+    it("should parse an upstream map from REHYDRA_UPSTREAM", async () => {
+      process.env["REHYDRA_UPSTREAM"] = "a.example=https://ua.example";
+      const exitCode = await startAndShutdown("auto", makeOptions());
+      expect(exitCode).toBe(0);
+      expect(mockCreateRehydraProxy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstreams: { "a.example": "https://ua.example" },
+        }),
+      );
+    });
+
+    it("should throw for a malformed upstream mapping", async () => {
+      await expect(
+        proxyCommand("auto", makeOptions({ upstream: "a.example=" })),
+      ).rejects.toThrow("Invalid upstream mapping");
+    });
+
     it("should resolve 'claude' to anthropic upstream", async () => {
       const exitCode = await startAndShutdown("claude", makeOptions());
       expect(exitCode).toBe(0);

@@ -53,7 +53,21 @@ export function createRehydraProxy(
   config: RehydraProxyConfig,
 ): (request: Request) => Promise<Response> {
   const forwardHeaders = config.forwardHeaders ?? DEFAULT_FORWARD_HEADERS;
-  const upstream = config.upstream.replace(/\/$/, ""); // Remove trailing slash
+  const defaultUpstream = config.upstream?.replace(/\/$/, ""); // Remove trailing slash
+  // Normalize routing keys (lowercase, port ignored) and values (no trailing slash)
+  const upstreams =
+    config.upstreams === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(config.upstreams).map(([host, url]) => [
+            host.toLowerCase().replace(/:\d+$/, ""),
+            url.replace(/\/$/, ""),
+          ]),
+        );
+
+  if (defaultUpstream === undefined && upstreams === undefined) {
+    throw new Error("createRehydraProxy requires `upstream` or `upstreams`");
+  }
 
   // Create the underlying Rehydra fetch wrapper
   const rehydraFetch = createRehydraFetch(config);
@@ -61,6 +75,24 @@ export function createRehydraProxy(
   return async (request: Request): Promise<Response> => {
     // Build upstream URL
     const requestUrl = new URL(request.url);
+
+    // Resolve the upstream: host-based routing when a map is configured
+    const upstream =
+      upstreams === undefined
+        ? defaultUpstream!
+        : (upstreams[requestUrl.hostname] ?? upstreams["*"]);
+    if (upstream === undefined) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            type: "no_upstream_for_host",
+            message: `No upstream configured for host: ${requestUrl.hostname}`,
+          },
+        }),
+        { status: 502, headers: { "content-type": "application/json" } },
+      );
+    }
+
     let pathname = requestUrl.pathname;
 
     // Strip prefix if configured

@@ -21,8 +21,11 @@ chmod 600 .env
 ```
 
 `REHYDRA_KEY` encrypts the in-memory PII map. `REHYDRA_UPSTREAM` is the
-upstream base URL the proxy forwards to. Do not put the upstream API key in
-this file; client `Authorization` and `x-api-key` headers are passed through.
+upstream base URL the proxy forwards to; it also accepts
+`host=url[,host=url...]` to route by the request's Host header (`*` as host is
+an explicit catch-all, unmatched hosts get 502). Do not put the upstream API
+key in this file; client `Authorization` and `x-api-key` headers are passed
+through.
 
 ## Operate
 

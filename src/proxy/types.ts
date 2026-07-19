@@ -128,8 +128,19 @@ export interface RehydraFetchConfig {
  * Configuration for the Rehydra proxy middleware
  */
 export interface RehydraProxyConfig extends RehydraFetchConfig {
-  /** Upstream LLM API base URL */
-  upstream: string;
+  /**
+   * Upstream LLM API base URL. Used when `upstreams` is not set.
+   * At least one of `upstream` / `upstreams` is required.
+   */
+  upstream?: string;
+
+  /**
+   * Host-based upstream routing: maps the request's hostname (case-insensitive,
+   * port ignored) to an upstream base URL. When set, `upstream` is ignored and
+   * requests whose hostname matches no entry are rejected with 502 — add a
+   * `"*"` entry for an explicit catch-all.
+   */
+  upstreams?: Record<string, string>;
 
   /**
    * Headers to forward to upstream.

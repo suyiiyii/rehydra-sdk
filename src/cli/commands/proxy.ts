@@ -31,6 +31,34 @@ const PROVIDER_UPSTREAMS: Record<string, string> = {
   responses: "https://api.openai.com",
 };
 
+/**
+ * Parse the --upstream / REHYDRA_UPSTREAM value. A plain URL selects a single
+ * upstream; `host=url[,host=url...]` builds a host-routing map (`*` as key is
+ * an explicit catch-all).
+ */
+function parseUpstreamOption(value: string | undefined): {
+  upstream?: string;
+  upstreams?: Record<string, string>;
+} {
+  if (value === undefined) return {};
+  if (!value.includes("=")) return { upstream: value };
+
+  const upstreams: Record<string, string> = {};
+  for (const pair of value.split(",")) {
+    const idx = pair.indexOf("=");
+    const host = pair.slice(0, idx).trim();
+    const url = idx === -1 ? "" : pair.slice(idx + 1).trim();
+    if (host === "" || url === "") {
+      throw new CLIError(
+        `Invalid upstream mapping: "${pair.trim()}"\n` +
+          "Expected host=url[,host=url...] or a single upstream URL",
+      );
+    }
+    upstreams[host] = url;
+  }
+  return { upstreams };
+}
+
 const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic" | "responses" | "auto"> = {
   openai: "openai",
   anthropic: "anthropic",
@@ -114,20 +142,20 @@ export async function proxyCommand(
     );
   }
 
-  const envUpstream = process.env["REHYDRA_UPSTREAM"];
+  const upstreamOption =
+    options.upstream ?? process.env["REHYDRA_UPSTREAM"];
 
-  if (
-    canonical === "auto" &&
-    options.upstream === undefined &&
-    envUpstream === undefined
-  ) {
+  if (canonical === "auto" && upstreamOption === undefined) {
     throw new CLIError(
       "Provider auto requires --upstream or REHYDRA_UPSTREAM",
     );
   }
 
+  const { upstream: singleUpstream, upstreams } =
+    parseUpstreamOption(upstreamOption);
   const upstream =
-    options.upstream ?? envUpstream ?? PROVIDER_UPSTREAMS[providerLower]!;
+    singleUpstream ??
+    (upstreams === undefined ? PROVIDER_UPSTREAMS[providerLower]! : undefined);
   const port = parseInt(options.port ?? "8787", 10);
   const host = options.host ?? "127.0.0.1";
 
@@ -167,6 +195,7 @@ export async function proxyCommand(
   // Build shared proxy config (without NER initially)
   const baseProxyConfig: RehydraProxyConfig = {
     upstream,
+    upstreams,
     provider: canonical,
     keyProvider,
     piiStorageProvider: storage,
@@ -231,7 +260,7 @@ export async function proxyCommand(
       "",
       `  ${bold("rehydra proxy")}`,
       "",
-      `  Provider   ${cyan(canonical)} ${dim(`(${upstream})`)}`,
+      `  Provider   ${cyan(canonical)} ${dim(`(${upstream ?? `${Object.keys(upstreams ?? {}).length} host-routed upstreams`})`)}`,
       `  Listening  ${green(baseUrl)}`,
       nerLine,
       ...bannerBottom,
