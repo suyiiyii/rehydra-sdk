@@ -8,6 +8,29 @@ services:
       - .env
     ports:
       - "8787:8787"
+    # Override the image CMD to append --audit-log. Audit records include the
+    # original un-anonymized bodies; the file persists on the host volume below.
+    command:
+      - node
+      - dist/cli/bin.js
+      - proxy
+      - auto
+      - --upstream
+      - https://upstream.example
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8787"
+      - --ner
+      - disabled
+      - --types
+      - API_KEY
+      - --secrets
+      - --quiet
+      - --audit-log
+      - /data/audit.jsonl
+    volumes:
+      - ./audit:/data
     healthcheck:
       test:
         - CMD
