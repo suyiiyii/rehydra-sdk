@@ -51,3 +51,6 @@ CLAUDE.md
 
 # Outreach materials (not part of the SDK)
 outreach/
+
+# Local Git worktrees
+.worktrees/
