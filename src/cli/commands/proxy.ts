@@ -163,6 +163,10 @@ export async function proxyCommand(
     throw new CLIError(`Invalid port: ${options.port}`);
   }
 
+  if (options["audit-compress"] === true && options["audit-log"] === undefined) {
+    throw new CLIError("--audit-compress requires --audit-log");
+  }
+
   // Key setup
   const envKey = process.env["REHYDRA_KEY"];
   const flagKey = options.key;
@@ -207,7 +211,11 @@ export async function proxyCommand(
     locale: options.locale,
     apiKey: llmApiKey,
     ...(options["audit-log"] !== undefined
-      ? { audit: new JsonlAuditSink(options["audit-log"]) }
+      ? {
+          audit: new JsonlAuditSink(options["audit-log"], {
+            compress: options["audit-compress"] ?? false,
+          }),
+        }
       : {}),
     // With --verbose, log per-request anonymization to stderr (never raw PII)
     ...(options.verbose && !options.quiet

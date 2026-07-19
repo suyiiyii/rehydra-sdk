@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
-import { readFile, rm, mkdtemp } from "node:fs/promises";
+import { readFile, rm, mkdtemp, mkdir, readdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import { JsonlAuditSink, newAuditId } from "../../src/proxy/audit.js";
 import type { AuditRecord } from "../../src/proxy/audit.js";
 import { createRehydraFetch } from "../../src/proxy/rehydra-fetch.js";
@@ -51,6 +52,112 @@ describe("JsonlAuditSink", () => {
     // Non-existent directory → appendFile rejects; sink must not throw.
     const sink = new JsonlAuditSink("/nonexistent-dir-xyz/audit.jsonl");
     await expect(sink.write(baseRecord())).resolves.toBeUndefined();
+  });
+});
+
+describe("JsonlAuditSink hourly rotation with zstd compression", () => {
+  let dir: string | null = null;
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    if (dir !== null) await rm(dir, { recursive: true, force: true });
+    dir = null;
+  });
+
+  function atHour(iso: string): void {
+    vi.setSystemTime(new Date(iso));
+  }
+
+  async function newDir(): Promise<string> {
+    dir = await mkdtemp(join(tmpdir(), "rehydra-audit-rot-"));
+    return dir;
+  }
+
+  it("rotates and compresses the previous hour on the first write of a new hour", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const d = await newDir();
+    const path = join(d, "audit.jsonl");
+    const sink = new JsonlAuditSink(path, { compress: true });
+
+    atHour("2026-07-20T02:10:00Z");
+    await sink.write({ ...baseRecord(), status: 200 });
+    atHour("2026-07-20T03:05:00Z");
+    await sink.write({ ...baseRecord(), status: 201 });
+    await sink.flush();
+
+    const files = (await readdir(d)).sort();
+    expect(files).toEqual(["audit-2026-07-20T02.jsonl.zst", "audit.jsonl"]);
+    // Rotated hour decompresses back to exactly the record written in it
+    const raw = zstdDecompressSync(await readFile(join(d, files[0]!)));
+    const rotated = raw.toString().trim().split("\n");
+    expect(rotated).toHaveLength(1);
+    expect(JSON.parse(rotated[0]!).status).toBe(200);
+    // Current file holds only the new hour's record
+    const current = (await readFile(path, "utf8")).trim().split("\n");
+    expect(current).toHaveLength(1);
+    expect(JSON.parse(current[0]!).status).toBe(201);
+  });
+
+  it("produces no file for hours without requests", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const d = await newDir();
+    const sink = new JsonlAuditSink(join(d, "audit.jsonl"), { compress: true });
+
+    atHour("2026-07-20T02:10:00Z");
+    await sink.write(baseRecord());
+    // Hours 03 and 04 receive no traffic; next write arrives at 05
+    atHour("2026-07-20T05:00:30Z");
+    await sink.write(baseRecord());
+    await sink.flush();
+
+    const files = (await readdir(d)).sort();
+    expect(files).toEqual(["audit-2026-07-20T02.jsonl.zst", "audit.jsonl"]);
+  });
+
+  it("sweeps a stale current file and leftover rotations on the first write", async () => {
+    const d = await newDir();
+    const path = join(d, "audit.jsonl");
+    // Leftover rotation from a crashed run (compression never finished)
+    await writeFile(join(d, "audit-2026-07-19T18.jsonl"), '{"status":1}\n');
+    // Stale current file whose mtime hour is long past
+    await writeFile(path, '{"status":2}\n');
+    const past = new Date("2026-07-19T20:30:00Z");
+    await utimes(path, past, past);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    atHour("2026-07-20T02:10:00Z");
+    const sink = new JsonlAuditSink(path, { compress: true });
+    await sink.write({ ...baseRecord(), status: 200 });
+    await sink.flush();
+
+    const files = (await readdir(d)).sort();
+    expect(files).toEqual([
+      "audit-2026-07-19T18.jsonl.zst",
+      "audit-2026-07-19T20.jsonl.zst",
+      "audit.jsonl",
+    ]);
+    expect(
+      zstdDecompressSync(await readFile(join(d, files[1]!))).toString(),
+    ).toBe('{"status":2}\n');
+  });
+
+  it("keeps the raw rotated file when compression fails", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const d = await newDir();
+    const path = join(d, "audit.jsonl");
+    const sink = new JsonlAuditSink(path, { compress: true });
+
+    atHour("2026-07-20T02:10:00Z");
+    await sink.write(baseRecord());
+    // Pre-create the .zst target as a directory so createWriteStream fails
+    await mkdir(join(d, "audit-2026-07-20T02.jsonl.zst"));
+    atHour("2026-07-20T03:05:00Z");
+    await sink.write(baseRecord());
+    await sink.flush();
+
+    const files = (await readdir(d)).sort();
+    expect(files).toContain("audit-2026-07-20T02.jsonl"); // raw preserved
+    expect(files).toContain("audit.jsonl");
   });
 });
 

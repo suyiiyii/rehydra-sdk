@@ -27,6 +27,15 @@ an explicit catch-all, unmatched hosts get 502). Do not put the upstream API
 key in this file; client `Authorization` and `x-api-key` headers are passed
 through.
 
+## Audit log
+
+The container appends full request/response audit records to
+`./audit/audit.jsonl` (`--audit-log`). With `--audit-compress`, the first
+request of each UTC hour rotates the previous hour to
+`audit-YYYY-MM-DDTHH.jsonl.zst` (zstd level 19, verified before the raw file
+is deleted); hours without traffic produce no file. Read an archive with
+`zstdcat audit-2026-07-20T02.jsonl.zst | jq .`.
+
 ## Operate
 
 ```bash

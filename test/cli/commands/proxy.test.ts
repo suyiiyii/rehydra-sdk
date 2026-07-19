@@ -239,6 +239,12 @@ describe("proxy command", () => {
       ).rejects.toThrow("Invalid upstream mapping");
     });
 
+    it("should throw for --audit-compress without --audit-log", async () => {
+      await expect(
+        proxyCommand("openai", makeOptions({ "audit-compress": true })),
+      ).rejects.toThrow("--audit-compress requires --audit-log");
+    });
+
     it("should resolve 'claude' to anthropic upstream", async () => {
       const exitCode = await startAndShutdown("claude", makeOptions());
       expect(exitCode).toBe(0);

@@ -28,6 +28,7 @@ export interface ParsedOptions {
   upstream?: string;
   "api-key"?: string;
   "audit-log"?: string;
+  "audit-compress"?: boolean;
   "tag-open"?: string;
   "tag-close"?: string;
   "tag-keyword"?: string;
@@ -65,6 +66,8 @@ ${bold("OPTIONS")}
       --api-key <key>      LLM API key (or set LLM_API_KEY env var)
       --audit-log <file>   Append full request/response audit records (JSONL).
                            WARNING: stores original un-anonymized bodies.
+      --audit-compress     Rotate the audit log hourly and compress rotated
+                           hours to zstd (level 19). Requires --audit-log.
       --tag-open <str>     Tag open delimiter (default: "<")
       --tag-close <str>    Tag close delimiter (default: "/>")
       --tag-keyword <str>  Tag keyword (default: "PII")
@@ -126,6 +129,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
         upstream: { type: "string" },
         "api-key": { type: "string" },
         "audit-log": { type: "string" },
+        "audit-compress": { type: "boolean" },
         "tag-open": { type: "string" },
         "tag-close": { type: "string" },
         "tag-keyword": { type: "string" },
@@ -187,6 +191,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
     upstream: values["upstream"] as string | undefined,
     "api-key": values["api-key"] as string | undefined,
     "audit-log": values["audit-log"] as string | undefined,
+    "audit-compress": values["audit-compress"] as boolean | undefined,
     "tag-open": values["tag-open"] as string | undefined,
     "tag-close": values["tag-close"] as string | undefined,
     "tag-keyword": values["tag-keyword"] as string | undefined,
