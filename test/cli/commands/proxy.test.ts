@@ -90,6 +90,7 @@ describe("proxy command", () => {
 
     origEnv = process.env["REHYDRA_KEY"];
     delete process.env["REHYDRA_KEY"];
+    delete process.env["REHYDRA_UPSTREAM"];
 
     vi.clearAllMocks();
     mockIsModelDownloaded.mockResolvedValue(true);
@@ -109,6 +110,7 @@ describe("proxy command", () => {
     }
     process.removeAllListeners("SIGINT");
     process.removeAllListeners("SIGTERM");
+    delete process.env["REHYDRA_UPSTREAM"];
   });
 
   // --- Validation ---
@@ -181,6 +183,18 @@ describe("proxy command", () => {
       expect(mockCreateRehydraProxy).toHaveBeenCalledWith(
         expect.objectContaining({
           upstream: "https://upstream.example",
+          provider: "auto",
+        }),
+      );
+    });
+
+    it("should read the auto upstream from REHYDRA_UPSTREAM when --upstream is absent", async () => {
+      process.env["REHYDRA_UPSTREAM"] = "https://env-upstream.example";
+      const exitCode = await startAndShutdown("auto", makeOptions());
+      expect(exitCode).toBe(0);
+      expect(mockCreateRehydraProxy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream: "https://env-upstream.example",
           provider: "auto",
         }),
       );

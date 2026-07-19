@@ -26,4 +26,5 @@ USER rehydra
 
 EXPOSE 8787
 
-CMD ["node", "dist/cli/bin.js", "proxy", "auto", "--upstream", "https://upstream.example", "--host", "0.0.0.0", "--port", "8787", "--ner", "disabled", "--types", "API_KEY", "--secrets", "--quiet"]
+# The upstream URL is supplied at runtime via REHYDRA_UPSTREAM.
+CMD ["node", "dist/cli/bin.js", "proxy", "auto", "--host", "0.0.0.0", "--port", "8787", "--ner", "disabled", "--types", "API_KEY", "--secrets", "--quiet"]

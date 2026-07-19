@@ -101,7 +101,7 @@ export async function proxyCommand(
         "  openai       OpenAI API\n" +
         "  anthropic    Anthropic API\n" +
         "  claude       Alias for anthropic\n" +
-        "  auto         Detect from the API route (requires --upstream)",
+        "  auto         Detect from the API route (requires --upstream or REHYDRA_UPSTREAM)",
     );
   }
 
@@ -114,11 +114,20 @@ export async function proxyCommand(
     );
   }
 
-  if (canonical === "auto" && options.upstream === undefined) {
-    throw new CLIError("Provider auto requires --upstream");
+  const envUpstream = process.env["REHYDRA_UPSTREAM"];
+
+  if (
+    canonical === "auto" &&
+    options.upstream === undefined &&
+    envUpstream === undefined
+  ) {
+    throw new CLIError(
+      "Provider auto requires --upstream or REHYDRA_UPSTREAM",
+    );
   }
 
-  const upstream = options.upstream ?? PROVIDER_UPSTREAMS[providerLower]!;
+  const upstream =
+    options.upstream ?? envUpstream ?? PROVIDER_UPSTREAMS[providerLower]!;
   const port = parseInt(options.port ?? "8787", 10);
   const host = options.host ?? "127.0.0.1";
 

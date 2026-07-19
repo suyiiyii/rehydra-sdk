@@ -2,21 +2,27 @@
 
 This deployment starts a route-restricted Rehydra proxy on port `8787`. It
 accepts OpenAI Chat Completions and Anthropic Messages requests, passes client
-credentials through to `https://upstream.example`, and uses rule matching to
-replace API keys found inside request text. It does not use an NER model.
+credentials through to the upstream relay configured in `.env`, and uses rule
+matching to replace API keys found inside request text. It does not use an NER
+model.
 
 ## Configure
 
-Create the host-only encryption key beside `docker-compose.yml`:
+Create the host-only `.env` beside `docker-compose.yml` with the encryption
+key and the real upstream URL (the URL is deliberately kept out of git):
 
 ```bash
 umask 077
-printf 'REHYDRA_KEY=%s\n' "$(openssl rand -base64 32)" > .env
+{
+  printf 'REHYDRA_KEY=%s\n' "$(openssl rand -base64 32)"
+  printf 'REHYDRA_UPSTREAM=%s\n' "https://<your-relay>"
+} > .env
 chmod 600 .env
 ```
 
-`REHYDRA_KEY` encrypts the in-memory PII map. Do not put the Relay API key
-in this file; client `Authorization` and `x-api-key` headers are passed through.
+`REHYDRA_KEY` encrypts the in-memory PII map. `REHYDRA_UPSTREAM` is the
+upstream base URL the proxy forwards to. Do not put the upstream API key in
+this file; client `Authorization` and `x-api-key` headers are passed through.
 
 ## Operate
 

@@ -13,13 +13,12 @@ services:
       - "8787:8787"
     # Override the image CMD to append --audit-log. Audit records include the
     # original un-anonymized bodies; the file persists on the host volume below.
+    # The upstream URL comes from REHYDRA_UPSTREAM in .env (never committed).
     command:
       - node
       - dist/cli/bin.js
       - proxy
       - auto
-      - --upstream
-      - https://upstream.example
       - --host
       - 0.0.0.0
       - --port
