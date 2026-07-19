@@ -61,6 +61,24 @@ Names, emails, phone numbers, and secrets are replaced with placeholders in tran
 
 > **Note:** The proxy requires an [Anthropic API key](https://console.anthropic.com/settings/keys). Claude Max/Pro subscriptions use OAuth which `api.anthropic.com` does not support through proxies.
 
+For an OpenAI/Anthropic-compatible relay that accepts both API shapes, use the
+route-aware mode:
+
+```bash
+rehydra proxy auto \
+  --upstream https://upstream.example \
+  --host 0.0.0.0 \
+  --ner disabled \
+  --types API_KEY \
+  --secrets
+```
+
+This mode exposes only `/healthz`, `/v1/models`, `/v1/chat/completions`, and
+`/v1/messages`. This configuration uses only API-key recognizer rules: it does
+not load an NER model or replace names, locations, email addresses, or other
+PII types. Authentication headers are passed through unless `--api-key` is
+explicitly configured.
+
 ### Browser extension — anonymize ChatGPT and Gemini
 
 Install the [Rehydra Chrome extension](https://chromewebstore.google.com/detail/rehydra-%E2%80%93-ki-privacy-date/oaiimlliicjbmgmamiahhnafpcenpohh) to protect PII directly in your browser. It replaces names, emails, phone numbers, and secrets with placeholders before your messages reach ChatGPT or Gemini, and rehydrates the responses back to real values in the UI. Detection runs on-device — no data leaves your machine.
