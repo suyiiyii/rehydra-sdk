@@ -76,6 +76,9 @@ export class OpenAIProvider implements LLMContentProvider {
   readonly name = "openai";
 
   matchesRequest(url: string, headers: Headers): boolean {
+    const pathname = new URL(url).pathname;
+    if (pathname === "/v1/chat/completions") return true;
+    if (pathname === "/v1/messages") return false;
     if (url.includes("api.openai.com")) return true;
     const auth = headers.get("authorization");
     if (auth !== null && auth.startsWith("Bearer sk-")) return true;

@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import {
   type NERConfig,
   type AnonymizationPolicy,
@@ -15,8 +15,7 @@ import {
 import { SECRET_PII_TYPES } from "../../types/pii-types.js";
 import {
   createRehydraProxy,
-  incomingMessageToRequest,
-  writeResponse,
+  createProxyRequestListener,
 } from "../../proxy/index.js";
 import type { RehydraProxyConfig, AnonymizeInfo } from "../../proxy/types.js";
 import type { ParsedOptions } from "../main.js";
@@ -31,20 +30,29 @@ const PROVIDER_UPSTREAMS: Record<string, string> = {
   claude: "https://api.anthropic.com",
 };
 
-const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic"> = {
+const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic" | "auto"> = {
   openai: "openai",
   anthropic: "anthropic",
   claude: "anthropic",
+  auto: "auto",
 };
 
 function getConnectionHints(
-  provider: "openai" | "anthropic",
+  provider: "openai" | "anthropic" | "auto",
   baseUrl: string,
   hasApiKey: boolean,
 ): string {
   const lines: string[] = [];
 
-  if (provider === "anthropic") {
+  if (provider === "auto") {
+    lines.push(
+      `  ${bold("OpenAI-compatible clients")}`,
+      `    export OPENAI_BASE_URL=${baseUrl}/v1`,
+      "",
+      `  ${bold("Claude Code")}`,
+      `    ANTHROPIC_BASE_URL=${baseUrl} claude`,
+    );
+  } else if (provider === "anthropic") {
     if (hasApiKey) {
       lines.push(
         `  ${bold("Claude Code")}`,
@@ -90,7 +98,8 @@ export async function proxyCommand(
         "Providers:\n" +
         "  openai       OpenAI API\n" +
         "  anthropic    Anthropic API\n" +
-        "  claude       Alias for anthropic",
+        "  claude       Alias for anthropic\n" +
+        "  auto         Detect from the API route (requires --upstream)",
     );
   }
 
@@ -99,13 +108,17 @@ export async function proxyCommand(
 
   if (canonical === undefined) {
     throw new CLIError(
-      `Unknown provider: ${provider}\nSupported: openai, anthropic, claude`,
+      `Unknown provider: ${provider}\nSupported: openai, anthropic, claude, auto`,
     );
+  }
+
+  if (canonical === "auto" && options.upstream === undefined) {
+    throw new CLIError("Provider auto requires --upstream");
   }
 
   const upstream = options.upstream ?? PROVIDER_UPSTREAMS[providerLower]!;
   const port = parseInt(options.port ?? "8787", 10);
-  const host = "127.0.0.1";
+  const host = options.host ?? "127.0.0.1";
 
   if (isNaN(port) || port < 1 || port > 65535) {
     throw new CLIError(`Invalid port: ${options.port}`);
@@ -173,21 +186,11 @@ export async function proxyCommand(
   let handler = createRehydraProxy(baseProxyConfig);
 
   // Create HTTP server with swappable handler
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void (async (): Promise<void> => {
-      try {
-        const webRequest = incomingMessageToRequest(req, host, port);
-        const webResponse = await handler(webRequest);
-        await writeResponse(res, webResponse);
-      } catch (error) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: "proxy_error",
-          message: error instanceof Error ? error.message : "Unknown proxy error",
-        }));
-      }
-    })();
-  });
+  const server = createServer(createProxyRequestListener({
+    host,
+    port,
+    getHandler: () => handler,
+  }));
 
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);

@@ -56,6 +56,9 @@ export class AnthropicProvider implements LLMContentProvider {
   readonly name = "anthropic";
 
   matchesRequest(url: string, headers: Headers): boolean {
+    const pathname = new URL(url).pathname;
+    if (pathname === "/v1/messages") return true;
+    if (pathname === "/v1/chat/completions") return false;
     if (url.includes("api.anthropic.com")) return true;
     if (headers.has("x-api-key")) return true;
     if (headers.has("anthropic-version")) return true;

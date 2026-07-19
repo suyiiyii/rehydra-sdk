@@ -24,6 +24,7 @@ export interface ParsedOptions {
   verbose: boolean;
   quiet: boolean;
   port?: string;
+  host?: string;
   upstream?: string;
   "api-key"?: string;
   "tag-open"?: string;
@@ -56,6 +57,7 @@ ${bold("OPTIONS")}
       --secrets            Enable secrets/credentials detection
       --env-file <file>    .env file path for literal value redaction
   -p, --port <port>        Proxy port (default: 8787)
+      --host <host>        Proxy bind host (default: 127.0.0.1)
       --upstream <url>     Custom upstream URL (overrides provider default)
       --api-key <key>      LLM API key (or set LLM_API_KEY env var)
       --tag-open <str>     Tag open delimiter (default: "<")
@@ -115,6 +117,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
         secrets: { type: "boolean", default: false },
         "env-file": { type: "string" },
         port: { type: "string", short: "p" },
+        host: { type: "string" },
         upstream: { type: "string" },
         "api-key": { type: "string" },
         "tag-open": { type: "string" },
@@ -174,6 +177,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
     verbose: values["verbose"] === true,
     quiet: values["quiet"] === true,
     port: values["port"] as string | undefined,
+    host: values["host"] as string | undefined,
     upstream: values["upstream"] as string | undefined,
     "api-key": values["api-key"] as string | undefined,
     "tag-open": values["tag-open"] as string | undefined,

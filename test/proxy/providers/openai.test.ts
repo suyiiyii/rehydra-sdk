@@ -5,6 +5,24 @@ describe("OpenAIProvider", () => {
   const provider = new OpenAIProvider();
 
   describe("matchesRequest", () => {
+    it("should match the Chat Completions route on a compatible upstream", () => {
+      expect(
+        provider.matchesRequest(
+          "https://upstream.example/v1/chat/completions",
+          new Headers({ Authorization: "Bearer test-token" }),
+        ),
+      ).toBe(true);
+    });
+
+    it("should not claim the Anthropic Messages route", () => {
+      expect(
+        provider.matchesRequest(
+          "https://upstream.example/v1/messages",
+          new Headers({ Authorization: "Bearer test-token" }),
+        ),
+      ).toBe(false);
+    });
+
     it("should match OpenAI API URLs", () => {
       expect(
         provider.matchesRequest(

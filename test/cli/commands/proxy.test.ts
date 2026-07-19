@@ -16,6 +16,7 @@ vi.mock("node:http", () => ({
 
 vi.mock("../../../src/proxy/index.js", () => ({
   createRehydraProxy: vi.fn(() => vi.fn()),
+  createProxyRequestListener: vi.fn(() => vi.fn()),
   incomingMessageToRequest: vi.fn(),
   writeResponse: vi.fn(),
 }));
@@ -113,6 +114,12 @@ describe("proxy command", () => {
   // --- Validation ---
 
   describe("validation", () => {
+    it("should require a custom upstream for auto provider mode", async () => {
+      await expect(
+        proxyCommand("auto", makeOptions()),
+      ).rejects.toThrow("Provider auto requires --upstream");
+    });
+
     it("should throw when no provider given", async () => {
       await expect(
         proxyCommand(undefined, makeOptions()),
@@ -165,6 +172,20 @@ describe("proxy command", () => {
   // --- Provider resolution ---
 
   describe("provider resolution", () => {
+    it("should configure auto provider mode with a custom upstream", async () => {
+      const exitCode = await startAndShutdown(
+        "auto",
+        makeOptions({ upstream: "https://upstream.example" }),
+      );
+      expect(exitCode).toBe(0);
+      expect(mockCreateRehydraProxy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          upstream: "https://upstream.example",
+          provider: "auto",
+        }),
+      );
+    });
+
     it("should resolve 'claude' to anthropic upstream", async () => {
       const exitCode = await startAndShutdown("claude", makeOptions());
       expect(exitCode).toBe(0);
@@ -221,6 +242,15 @@ describe("proxy command", () => {
   // --- Server lifecycle ---
 
   describe("server lifecycle", () => {
+    it("should bind to a configured host", async () => {
+      const exitCode = await startAndShutdown(
+        "claude",
+        makeOptions({ host: "0.0.0.0" }),
+      );
+      expect(exitCode).toBe(0);
+      expect(mockServer.listen).toHaveBeenCalledWith(8787, "0.0.0.0", expect.any(Function));
+    });
+
     it("should start server on default port 8787", async () => {
       const exitCode = await startAndShutdown("claude", makeOptions());
       expect(exitCode).toBe(0);

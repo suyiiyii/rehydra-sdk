@@ -16,6 +16,97 @@ export interface RehydraProxyServerConfig extends RehydraProxyConfig {
   port: number;
   /** Host to bind to (default: "127.0.0.1") */
   host?: string;
+  /** Readiness predicate for required dependencies (default: ready) */
+  isReady?: () => boolean;
+}
+
+export type ProxyRouteClassification =
+  | "health"
+  | "proxy"
+  | "not-found"
+  | "method-not-allowed";
+
+export type RehydraProxyHandler = (request: Request) => Promise<Response>;
+
+export interface ProxyRequestListenerConfig {
+  host: string;
+  port: number;
+  getHandler: () => RehydraProxyHandler;
+  isReady?: () => boolean;
+}
+
+const SUPPORTED_PROXY_ROUTES = new Map<string, string>([
+  ["/v1/models", "GET"],
+  ["/v1/chat/completions", "POST"],
+  ["/v1/messages", "POST"],
+]);
+
+export function classifyProxyRoute(
+  method: string,
+  pathname: string,
+): ProxyRouteClassification {
+  if (pathname === "/healthz") {
+    return method === "GET" ? "health" : "method-not-allowed";
+  }
+
+  const expectedMethod = SUPPORTED_PROXY_ROUTES.get(pathname);
+  if (expectedMethod === undefined) return "not-found";
+  return method === expectedMethod ? "proxy" : "method-not-allowed";
+}
+
+function writeJSON(
+  res: ServerResponse,
+  status: number,
+  body: Record<string, unknown>,
+): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+export function createProxyRequestListener(
+  config: ProxyRequestListenerConfig,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    void (async (): Promise<void> => {
+      const pathname = new URL(req.url ?? "/", "http://proxy.local").pathname;
+      const route = classifyProxyRoute(req.method ?? "GET", pathname);
+      const ready = config.isReady?.() ?? true;
+
+      if (route === "health") {
+        writeJSON(
+          res,
+          ready ? 200 : 503,
+          ready
+            ? { status: "ok", ready: true }
+            : { status: "unavailable", ready: false },
+        );
+        return;
+      }
+      if (route === "not-found") {
+        writeJSON(res, 404, { error: "not_found" });
+        return;
+      }
+      if (route === "method-not-allowed") {
+        writeJSON(res, 405, { error: "method_not_allowed" });
+        return;
+      }
+      if (!ready) {
+        writeJSON(res, 503, { error: "proxy_not_ready" });
+        return;
+      }
+
+      try {
+        const webRequest = incomingMessageToRequest(req, config.host, config.port);
+        const webResponse = await config.getHandler()(webRequest);
+        await writeResponse(res, webResponse);
+      } catch (error) {
+        writeJSON(res, 502, {
+          error: "proxy_error",
+          message: error instanceof Error ? error.message : "Unknown proxy error",
+        });
+      }
+    })();
+  };
 }
 
 /**
@@ -60,21 +151,12 @@ export async function createRehydraProxyServer(
   const host = config.host ?? "127.0.0.1";
   const proxy = createRehydraProxy(config);
 
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void (async (): Promise<void> => {
-      try {
-        const webRequest = incomingMessageToRequest(req, host, config.port);
-        const webResponse = await proxy(webRequest);
-        await writeResponse(res, webResponse);
-      } catch (error) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: "proxy_error",
-          message: error instanceof Error ? error.message : "Unknown proxy error",
-        }));
-      }
-    })();
-  });
+  const server = createServer(createProxyRequestListener({
+    host,
+    port: config.port,
+    getHandler: () => proxy,
+    isReady: config.isReady,
+  }));
 
   await new Promise<void>((resolve, reject) => {
     server.on("error", reject);

@@ -5,6 +5,27 @@ describe("AnthropicProvider", () => {
   const provider = new AnthropicProvider();
 
   describe("matchesRequest", () => {
+    it("should match the Messages route before credential heuristics", () => {
+      expect(
+        provider.matchesRequest(
+          "https://upstream.example/v1/messages",
+          new Headers({
+            Authorization: "Bearer test-token",
+            "x-api-key": "test-key",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("should not claim the OpenAI Chat Completions route", () => {
+      expect(
+        provider.matchesRequest(
+          "https://upstream.example/v1/chat/completions",
+          new Headers(),
+        ),
+      ).toBe(false);
+    });
+
     it("should match Anthropic API URLs", () => {
       expect(
         provider.matchesRequest(
