@@ -4,6 +4,9 @@ services:
     build:
       context: ../..
     restart: unless-stopped
+    # Run as the host user that owns ./audit so the bind-mounted audit log is
+    # writable (image default uid 999 cannot write the host-owned dir).
+    user: "1000:1000"
     env_file:
       - .env
     ports:
