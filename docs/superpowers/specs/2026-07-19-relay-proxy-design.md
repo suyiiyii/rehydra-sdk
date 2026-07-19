@@ -3,7 +3,8 @@
 ## Goal
 
 Deploy one hardened Rehydra instance that accepts both OpenAI Chat Completions
-and Anthropic Messages requests, anonymizes sensitive content, forwards the
+and Anthropic Messages requests, replaces API keys found in message content,
+forwards the
 requests to `https://upstream.example/v1`, and rehydrates buffered and streamed
 responses before returning them to clients.
 
@@ -56,8 +57,9 @@ iteration.
 1. Validate the route, method, and JSON content type.
 2. Select the provider from the route, with headers used only as corroborating
    evidence.
-3. Detect and anonymize configured PII and secrets in provider-defined text
-   fields, tool results, and system instructions.
+3. Detect API keys with deterministic recognizer rules in provider-defined
+   text fields, tool results, and system instructions. Do not inspect names,
+   locations, email addresses, or other PII categories.
 4. Forward the rebuilt body and allowlisted headers to Relay.
 5. Never log raw request bodies, API keys, PII values, or mappings.
 
@@ -78,22 +80,19 @@ protocols share the same upstream domain.
 ### Failure behaviour
 
 - Invalid client JSON returns `400` without calling Relay.
-- Anonymizer or required NER initialization failure keeps readiness false and
-  prevents LLM requests from reaching Relay.
+- API-key detection failures prevent the affected request from reaching
+  Relay.
 - Unsupported routes return `404` or `405` explicitly.
 - Upstream network failure returns a structured `502`.
-- Detection errors fail closed; there is no regex-only fallback when NER is
-  configured as required.
+- Detection errors fail closed for the affected request.
 
-## NER and Secret Detection
+## API-key Rule Detection
 
-- Existing deterministic recognizers remain enabled for email, IP addresses,
-  credentials, API keys, private keys, JWTs, and related structured secrets.
-- `--secrets` is enabled in deployment.
-- Quantized NER is required for person, organization, and location detection.
-- Inputs exceeding one model window are processed in overlapping chunks. No
-  suffix may be silently discarded.
-- Duplicate entities in chunk overlaps are merged deterministically.
+- Only the deterministic `API_KEY` recognizer is enabled.
+- Deployment uses `--ner disabled --types API_KEY --secrets`.
+- No ONNX runtime or NER model is installed, downloaded, or loaded.
+- API keys inside request/response text are replaced and rehydrated. Client
+  authentication headers are transport credentials and remain unchanged.
 
 ## Operational Configuration
 
@@ -119,8 +118,7 @@ Automated tests cover:
 - route-based OpenAI/Anthropic provider selection;
 - client API-key pass-through without log exposure;
 - stale response framing header removal;
-- long-input NER chunking and overlap merging;
-- fail-closed initialization and detection errors;
+- API-key-only policy selection and fail-closed detection errors;
 - buffered response and tool-argument rehydration;
 - OpenAI and Anthropic SSE rehydration when tags split across chunks;
 - `/healthz`, `/v1/models`, unsupported routes, and client cancellation.
@@ -131,7 +129,7 @@ Deployment acceptance uses the real Relay `grok-4.5` model and verifies:
 2. OpenAI SSE with actual incremental delivery.
 3. Anthropic buffered response.
 4. Anthropic SSE with actual incremental delivery.
-5. Request anonymization and response rehydration using synthetic PII.
+5. Request replacement and response rehydration using a synthetic API key.
 6. `Authorization` and `x-api-key` pass-through.
 7. `/v1/models` pass-through.
 8. Internal port, FRP port, Caddy TLS, and public endpoint health.
