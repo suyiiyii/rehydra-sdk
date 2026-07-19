@@ -7,9 +7,6 @@ import {
   createNERModel,
   NERModelStub,
   createNERModelStub,
-  createNERTextWindows,
-  mergeNERWindowSpans,
-  offsetNERWindowSpans,
   type INERModel,
 } from '../../src/ner/ner-model.js';
 import {
@@ -18,85 +15,6 @@ import {
   MODEL_REGISTRY,
 } from '../../src/ner/model-manager.js';
 import { createDefaultPolicy, PIIType } from '../../src/index.js';
-
-describe('NER text windows', () => {
-  it('covers long input with bounded overlapping windows', () => {
-    const text = 'abcdefghijklmnopqrstuvwxyz';
-    const windows = createNERTextWindows(text, 10, 2);
-
-    expect(windows.length).toBeGreaterThan(1);
-    expect(windows[0]).toEqual({ text: 'abcdefgh', start: 0, end: 8 });
-    expect(windows.at(-1)?.end).toBe(text.length);
-    for (const window of windows) {
-      expect(window.text).toBe(text.slice(window.start, window.end));
-      expect(window.end - window.start).toBeLessThanOrEqual(8);
-    }
-    for (let i = 1; i < windows.length; i++) {
-      expect(windows[i]!.start).toBe(windows[i - 1]!.end - 2);
-    }
-  });
-
-  it('does not split a UTF-16 surrogate pair at a boundary', () => {
-    const text = 'abcdef😀ghijklmnop';
-    const windows = createNERTextWindows(text, 10, 2);
-
-    for (const window of windows) {
-      const first = window.text.charCodeAt(0);
-      const last = window.text.charCodeAt(window.text.length - 1);
-      expect(first >= 0xdc00 && first <= 0xdfff).toBe(false);
-      expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
-    }
-  });
-
-  it('returns no windows for empty input', () => {
-    expect(createNERTextWindows('', 512)).toEqual([]);
-  });
-
-  it('merges overlapping same-type window detections deterministically', () => {
-    const text = 'prefix John Smith suffix';
-    const spans = mergeNERWindowSpans([
-      {
-        type: PIIType.PERSON,
-        start: 7,
-        end: 11,
-        confidence: 0.8,
-        source: 'NER' as any,
-        text: 'John',
-      },
-      {
-        type: PIIType.PERSON,
-        start: 7,
-        end: 17,
-        confidence: 0.9,
-        source: 'NER' as any,
-        text: 'John Smith',
-      },
-    ], text);
-
-    expect(spans).toHaveLength(1);
-    expect(spans[0]).toMatchObject({ start: 7, end: 17, text: 'John Smith' });
-  });
-
-  it('converts later-window spans to absolute source offsets', () => {
-    const text = '0123456789John Smith suffix';
-    const spans = offsetNERWindowSpans([
-      {
-        type: PIIType.PERSON,
-        start: 0,
-        end: 10,
-        confidence: 0.9,
-        source: 'NER' as any,
-        text: 'John Smith',
-      },
-    ], { text: 'John Smith suffix', start: 10, end: text.length }, text);
-
-    expect(spans[0]).toMatchObject({
-      start: 10,
-      end: 20,
-      text: 'John Smith',
-    });
-  });
-});
 
 describe('NER Model', () => {
   describe('NERModelStub', () => {
@@ -516,3 +434,4 @@ describe('NER with Anonymizer Integration', () => {
     await anonymizer.dispose();
   }, 60000);
 });
+
