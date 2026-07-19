@@ -11,8 +11,10 @@ describe("classifyProxyRoute", () => {
     ["GET", "/v1/models", "proxy"],
     ["POST", "/v1/chat/completions", "proxy"],
     ["POST", "/v1/messages", "proxy"],
-    ["POST", "/v1/responses", "not-found"],
+    ["POST", "/v1/responses", "proxy"],
+    ["POST", "/v1/unknown", "not-found"],
     ["GET", "/v1/messages", "method-not-allowed"],
+    ["GET", "/v1/responses", "method-not-allowed"],
     ["POST", "/v1/models", "method-not-allowed"],
   ])("classifies %s %s as %s", (method, pathname, expected) => {
     expect(classifyProxyRoute(method, pathname)).toBe(expected);
@@ -67,8 +69,9 @@ describe("createProxyRequestListener", () => {
   it("rejects unsupported and wrong-method routes locally", async () => {
     const { baseUrl, handler } = await start(() => true);
 
-    expect((await fetch(`${baseUrl}/v1/responses`, { method: "POST" })).status).toBe(404);
+    expect((await fetch(`${baseUrl}/v1/unknown`, { method: "POST" })).status).toBe(404);
     expect((await fetch(`${baseUrl}/v1/messages`)).status).toBe(405);
+    expect((await fetch(`${baseUrl}/v1/responses`)).status).toBe(405);
     expect(handler).not.toHaveBeenCalled();
   });
 
