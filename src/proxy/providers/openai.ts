@@ -150,7 +150,9 @@ export class OpenAIProvider implements LLMContentProvider {
   extractSSEDelta(data: unknown): string | null {
     const chunk = data as OpenAIStreamChunk;
     const content = chunk.choices?.[0]?.delta?.content;
-    if (content === undefined || content === null) return null;
+    // Empty content carries no text to rehydrate but may carry metadata
+    // (e.g. finish_reason) — treat as "not ours" so the frame passes through.
+    if (content === undefined || content === null || content === "") return null;
     return typeof content === "string" ? content : null;
   }
 

@@ -289,6 +289,17 @@ async function rehydrateJSONResponse(
 ): Promise<Response> {
   // Read raw text so we can fall back to it if JSON parsing fails
   const rawText = await response.text();
+
+  // Upstream errors (401/404/5xx) carry provider-specific error bodies with
+  // no choices to rehydrate — pass them through instead of crashing rebuild.
+  if (!response.ok) {
+    return new Response(rawText, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: sanitizeModifiedResponseHeaders(response.headers),
+    });
+  }
+
   let body: unknown;
   try {
     body = JSON.parse(rawText);

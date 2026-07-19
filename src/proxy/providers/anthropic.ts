@@ -177,7 +177,10 @@ export class AnthropicProvider implements LLMContentProvider {
   extractSSEDelta(data: unknown): string | null {
     const event = data as AnthropicStreamEvent;
     if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-      return typeof event.delta.text === "string" ? event.delta.text : null;
+      // Empty text carries nothing to rehydrate — pass the frame through.
+      return typeof event.delta.text === "string" && event.delta.text !== ""
+        ? event.delta.text
+        : null;
     }
     return null;
   }

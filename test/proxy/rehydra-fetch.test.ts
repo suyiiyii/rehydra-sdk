@@ -358,6 +358,95 @@ describe("createRehydraFetch", () => {
     });
   });
 
+  it("should forward finish_reason and usage frames unchanged", async () => {
+    // Mirror the real upstream frame sequence: role, content,
+    // finish_reason:"stop" with empty content, usage, [DONE].
+    const frames = [
+      { choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { content: "" }, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+    ];
+    const server = createServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const frame of frames) {
+        res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve((server.address() as { port: number }).port);
+      });
+    });
+
+    try {
+      const rehydraFetch = createRehydraFetch({
+        keyProvider: new InMemoryKeyProvider(),
+        piiStorageProvider: new InMemoryPIIStorageProvider(),
+        provider: "openai",
+        getSessionId: async () => "finish-frame-session",
+      });
+
+      const response = await rehydraFetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "test",
+          messages: [{ role: "user", content: "Reply exactly: ok" }],
+          stream: true,
+        }),
+      });
+
+      const fullText = await response.text();
+      const dataLines = fullText.split("\n").filter((l) => l.startsWith("data: "));
+      // All 4 frames plus [DONE] must survive the proxy
+      expect(dataLines).toHaveLength(5);
+      expect(fullText).toContain('"finish_reason":"stop"');
+      expect(fullText).toContain('"usage"');
+      expect(fullText).toContain("[DONE]");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("should pass through upstream error responses unchanged", async () => {
+    const errorBody = { error: { message: "Invalid API key", type: "invalid_api_key" } };
+    const server = createServer((req, res) => {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(errorBody));
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve((server.address() as { port: number }).port);
+      });
+    });
+
+    try {
+      const rehydraFetch = createRehydraFetch({
+        keyProvider: new InMemoryKeyProvider(),
+        piiStorageProvider: new InMemoryPIIStorageProvider(),
+        provider: "openai",
+        getSessionId: async () => "error-passthrough-session",
+      });
+
+      const response = await rehydraFetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "test",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual(errorBody);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   describe("error handling", () => {
     it("should return 400 for malformed request body", async () => {
       const rehydraFetch = createRehydraFetch({

@@ -176,6 +176,14 @@ describe("OpenAIProvider", () => {
 
       expect(provider.extractSSEDelta(data)).toBeNull();
     });
+
+    it("should return null for empty content (finish_reason frames)", () => {
+      const data = {
+        choices: [{ delta: { content: "" }, finish_reason: "stop" }],
+      };
+
+      expect(provider.extractSSEDelta(data)).toBeNull();
+    });
   });
 
   describe("rebuildSSEDelta", () => {

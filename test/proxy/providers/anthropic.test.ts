@@ -168,6 +168,15 @@ describe("AnthropicProvider", () => {
       expect(provider.extractSSEDelta(data)).toBe("Hello");
     });
 
+    it("should return null for empty text_delta", () => {
+      const data = {
+        type: "content_block_delta",
+        delta: { type: "text_delta", text: "" },
+      };
+
+      expect(provider.extractSSEDelta(data)).toBeNull();
+    });
+
     it("should return null for non-delta events", () => {
       expect(
         provider.extractSSEDelta({ type: "message_start" }),
