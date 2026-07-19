@@ -27,17 +27,19 @@ const PROVIDER_UPSTREAMS: Record<string, string> = {
   openai: "https://api.openai.com",
   anthropic: "https://api.anthropic.com",
   claude: "https://api.anthropic.com",
+  responses: "https://api.openai.com",
 };
 
-const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic" | "auto"> = {
+const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic" | "responses" | "auto"> = {
   openai: "openai",
   anthropic: "anthropic",
   claude: "anthropic",
+  responses: "responses",
   auto: "auto",
 };
 
 function getConnectionHints(
-  provider: "openai" | "anthropic" | "auto",
+  provider: "openai" | "anthropic" | "responses" | "auto",
   baseUrl: string,
   hasApiKey: boolean,
 ): string {
@@ -107,7 +109,7 @@ export async function proxyCommand(
 
   if (canonical === undefined) {
     throw new CLIError(
-      `Unknown provider: ${provider}\nSupported: openai, anthropic, claude, auto`,
+      `Unknown provider: ${provider}\nSupported: openai, anthropic, claude, responses, auto`,
     );
   }
 

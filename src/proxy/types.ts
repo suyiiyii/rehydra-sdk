@@ -57,7 +57,7 @@ export interface RehydraFetchConfig {
   piiStorageProvider: PIIStorageProvider;
 
   /** LLM provider name or 'auto' for auto-detection */
-  provider?: "openai" | "anthropic" | "auto";
+  provider?: "openai" | "anthropic" | "responses" | "auto";
 
   /**
    * Function to derive session ID from a request.

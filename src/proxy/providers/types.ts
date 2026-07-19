@@ -3,6 +3,8 @@
  * Abstracts LLM-specific request/response formats for the proxy middleware.
  */
 
+import type { SSEEvent } from "../sse-parser.js";
+
 /**
  * Structured tool call information extracted from a non-streaming response.
  * Used by the tool execution loop to invoke user callbacks.
@@ -134,4 +136,15 @@ export interface LLMContentProvider {
    * Returns a new body with the instruction prepended to the system prompt.
    */
   injectSystemInstruction?(body: unknown, instruction: string): unknown;
+
+  /**
+   * Rehydrate a fully buffered SSE event stream in one pass.
+   * When present, the proxy collects the entire upstream stream, calls this
+   * once, and replays the returned events to the client. Trades time-to-first-
+   * byte for much simpler and safer whole-text rehydration.
+   */
+  rehydrateBufferedSSE?(
+    events: SSEEvent[],
+    rehydrateText: (text: string) => Promise<string>,
+  ): Promise<SSEEvent[]>;
 }

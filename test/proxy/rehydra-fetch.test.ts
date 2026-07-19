@@ -411,6 +411,79 @@ describe("createRehydraFetch", () => {
     }
   });
 
+  it("should rehydrate buffered Responses API streams end to end", async () => {
+    // Mock /v1/responses upstream: echoes the (anonymized) input text back
+    // in the real typed event sequence captured from upstream.example.
+    let receivedBody: any = null;
+    const server = createServer(async (req, res) => {
+      let raw = "";
+      for await (const c of req) raw += c;
+      receivedBody = JSON.parse(raw);
+      const text = receivedBody.input as string;
+      const item = "item_1";
+
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      const frames: Array<[string, object]> = [
+        ["response.created", { type: "response.created", response: { id: "r1", status: "in_progress", output: [] } }],
+        ["response.output_text.delta", { type: "response.output_text.delta", content_index: 0, item_id: item, delta: text.slice(0, 5) }],
+        ["response.output_text.delta", { type: "response.output_text.delta", content_index: 0, item_id: item, delta: text.slice(5) }],
+        ["response.output_text.done", { type: "response.output_text.done", content_index: 0, item_id: item, text }],
+        ["response.completed", {
+          type: "response.completed",
+          response: { id: "r1", status: "completed", output: [{ type: "message", id: item, content: [{ type: "output_text", text }] }] },
+        }],
+      ];
+      for (const [event, data] of frames) {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        resolve((server.address() as { port: number }).port);
+      });
+    });
+
+    try {
+      const rehydraFetch = createRehydraFetch({
+        keyProvider: new InMemoryKeyProvider(),
+        piiStorageProvider: new InMemoryPIIStorageProvider(),
+        provider: "responses",
+        getSessionId: async () => "responses-buffered-session",
+      });
+
+      const response = await rehydraFetch(`http://127.0.0.1:${port}/v1/responses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-5-mini",
+          stream: true,
+          input: "Contact john@example.com please",
+        }),
+      });
+
+      expect(response.ok).toBe(true);
+      const fullText = await response.text();
+
+      // Request side was anonymized before reaching upstream
+      expect(receivedBody.input).toContain('<PII type="EMAIL"');
+
+      // Deltas collapsed into one frame carrying the full rehydrated text
+      const deltaLines = fullText
+        .split("\n")
+        .filter((l) => l.startsWith("data: ") && l.includes("output_text.delta"));
+      expect(deltaLines).toHaveLength(1);
+      expect(JSON.parse(deltaLines[0]!.slice(6)).delta).toContain("john@example.com");
+
+      // No anonymized placeholder may reach the client, in any frame
+      expect(fullText).not.toContain("<PII");
+      expect(fullText).toContain("[DONE]");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("should pass through upstream error responses unchanged", async () => {
     const errorBody = { error: { message: "Invalid API key", type: "invalid_api_key" } };
     const server = createServer((req, res) => {

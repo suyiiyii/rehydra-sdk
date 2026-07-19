@@ -39,6 +39,7 @@ const SUPPORTED_PROXY_ROUTES = new Map<string, string>([
   ["/v1/models", "GET"],
   ["/v1/chat/completions", "POST"],
   ["/v1/messages", "POST"],
+  ["/v1/responses", "POST"],
 ]);
 
 export function classifyProxyRoute(

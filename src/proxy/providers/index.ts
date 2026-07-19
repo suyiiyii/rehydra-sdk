@@ -6,6 +6,7 @@
 import type { LLMContentProvider } from "./types.js";
 import { OpenAIProvider } from "./openai.js";
 import { AnthropicProvider } from "./anthropic.js";
+import { ResponsesProvider } from "./responses.js";
 
 export type {
   LLMContentProvider,
@@ -14,9 +15,13 @@ export type {
 } from "./types.js";
 export { OpenAIProvider } from "./openai.js";
 export { AnthropicProvider } from "./anthropic.js";
+export { ResponsesProvider } from "./responses.js";
 
 /** Built-in providers */
+// ResponsesProvider must precede OpenAIProvider: the OpenAI matcher accepts
+// any "Bearer sk-" request, which would shadow /v1/responses routing.
 const PROVIDERS: LLMContentProvider[] = [
+  new ResponsesProvider(),
   new OpenAIProvider(),
   new AnthropicProvider(),
 ];
@@ -33,7 +38,7 @@ const PROVIDERS: LLMContentProvider[] = [
 export function detectProvider(
   url: string,
   headers: Headers,
-  hint?: "openai" | "anthropic" | "auto",
+  hint?: "openai" | "anthropic" | "responses" | "auto",
 ): LLMContentProvider {
   // If a specific provider is requested, return it directly
   if (hint && hint !== "auto") {

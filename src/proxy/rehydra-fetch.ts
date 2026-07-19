@@ -248,6 +248,9 @@ export function createRehydraFetch(
         responseContentType.includes("text/event-stream");
 
       if (isSSE && response.body !== null) {
+        if (provider.rehydrateBufferedSSE !== undefined) {
+          return rehydrateBufferedSSEResponse(response, session, provider);
+        }
         return rehydrateSSEResponse(response, session, provider, config);
       }
 
@@ -277,6 +280,33 @@ export function createRehydraFetch(
       return errorResponse(500, msg);
     }
   };
+}
+
+/**
+ * Rehydrate an SSE response in buffered mode: collect the whole upstream
+ * stream, let the provider rewrite it in one pass, then replay it to the
+ * client. Used by providers that repeat full text across frames (Responses
+ * API), where incremental rewriting would be error-prone.
+ */
+async function rehydrateBufferedSSEResponse(
+  response: Response,
+  session: AnonymizerSessionImpl,
+  provider: LLMContentProvider,
+): Promise<Response> {
+  const rawText = await response.text();
+  const parser = new SSEParser();
+  const events = [...parser.parse(rawText), ...parser.flush()];
+
+  const rewritten = await provider.rehydrateBufferedSSE!(events, (text) =>
+    session.rehydrate(text),
+  );
+
+  const payload = rewritten.map(serializeSSEEvent).join("");
+  return new Response(payload, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: sanitizeModifiedResponseHeaders(response.headers),
+  });
 }
 
 /**
