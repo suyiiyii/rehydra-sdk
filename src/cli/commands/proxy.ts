@@ -17,6 +17,7 @@ import {
   createProxyRequestListener,
 } from "../../proxy/index.js";
 import type { RehydraProxyConfig, AnonymizeInfo } from "../../proxy/types.js";
+import { JsonlAuditSink } from "../../proxy/audit.js";
 import type { ParsedOptions } from "../main.js";
 import { CLIError } from "../utils/errors.js";
 import { bold, dim, cyan, green, yellow } from "../utils/color.js";
@@ -167,6 +168,9 @@ export async function proxyCommand(
     policy,
     locale: options.locale,
     apiKey: llmApiKey,
+    ...(options["audit-log"] !== undefined
+      ? { audit: new JsonlAuditSink(options["audit-log"]) }
+      : {}),
     // With --verbose, log per-request anonymization to stderr (never raw PII)
     ...(options.verbose && !options.quiet
       ? {

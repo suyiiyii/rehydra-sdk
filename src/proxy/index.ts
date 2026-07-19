@@ -4,6 +4,8 @@
  */
 
 export { createRehydraFetch } from "./rehydra-fetch.js";
+export { JsonlAuditSink, newAuditId } from "./audit.js";
+export type { AuditRecord, AuditSink } from "./audit.js";
 export { createRehydraProxy } from "./rehydra-proxy.js";
 export { wrapLLMClient } from "./wrap-client.js";
 export {

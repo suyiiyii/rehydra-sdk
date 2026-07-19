@@ -6,6 +6,7 @@ import type { AnonymizerConfig } from "../core/anonymizer.js";
 import type { AnonymizationPolicy } from "../types/index.js";
 import type { KeyProvider } from "../crypto/index.js";
 import type { PIIStorageProvider } from "../storage/types.js";
+import type { AuditSink } from "./audit.js";
 
 /**
  * Callback invoked when the LLM requests a tool call during an agentic loop.
@@ -112,6 +113,15 @@ export interface RehydraFetchConfig {
    * logging and observability.
    */
   onAnonymize?: (info: AnonymizeInfo) => void;
+
+  /**
+   * Audit sink. When set, every intercepted request is recorded with all four
+   * payloads (request/response before and after transformation) plus metadata.
+   *
+   * WARNING: records contain the original, un-anonymized bodies (real PII and
+   * credentials). Only enable when the audit destination is trusted.
+   */
+  audit?: AuditSink;
 }
 
 /**

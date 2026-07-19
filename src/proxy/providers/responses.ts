@@ -217,7 +217,7 @@ export class ResponsesProvider implements LLMContentProvider {
     // deltas can be collapsed into one frame with the full rehydrated text.
     const textDeltas = new Map<string, string>();
     const argDeltas = new Map<string, string>();
-    const parsedEvents: Array<unknown | null> = [];
+    const parsedEvents: unknown[] = [];
 
     for (const event of events) {
       if (isSSEDone(event.data)) {

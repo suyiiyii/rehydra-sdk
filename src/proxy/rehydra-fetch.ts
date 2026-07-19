@@ -16,6 +16,63 @@ import type { RehydraFetchConfig } from "./types.js";
 import { buildPIISystemInstruction } from "./system-instruction.js";
 import { buildTagPrefix } from "../utils/regex.js";
 import { DEFAULT_TAG_FORMAT } from "../types/index.js";
+import { newAuditId } from "./audit.js";
+import type { AuditRecord, AuditSink } from "./audit.js";
+
+/** Drain a byte stream fully into a decoded string (used for audit capture). */
+async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out += decoder.decode(value, { stream: true });
+  }
+  out += decoder.decode();
+  return out;
+}
+
+/**
+ * Per-request audit capture. Accumulates the four payloads and metadata, then
+ * writes exactly once. Response-side hooks call finish(); the incremental
+ * streaming path calls it after the tee'd branch finishes draining.
+ */
+interface AuditCapture {
+  finish(fields: {
+    status: number;
+    streaming: boolean;
+    original: string;
+    transformed: string;
+    error?: string;
+  }): Promise<void>;
+}
+
+function createAuditCapture(
+  sink: AuditSink,
+  base: Omit<
+    AuditRecord,
+    "status" | "streaming" | "durationMs" | "response" | "error" | "timestamp"
+  >,
+  startTime: number,
+): AuditCapture {
+  let done = false;
+  return {
+    async finish(fields): Promise<void> {
+      if (done) return;
+      done = true;
+      await sink.write({
+        ...base,
+        timestamp: new Date().toISOString(),
+        status: fields.status,
+        streaming: fields.streaming,
+        durationMs: Date.now() - startTime,
+        response: { original: fields.original, transformed: fields.transformed },
+        ...(fields.error !== undefined ? { error: fields.error } : {}),
+      });
+    },
+  };
+}
 
 /** Headers to strip from proxied responses — the body is decompressed and may be modified. */
 const STRIP_RESPONSE_HEADERS = [
@@ -132,6 +189,7 @@ export function createRehydraFetch(
     }
 
     const request = new Request(input, init);
+    const startTime = Date.now();
 
     // Only intercept POST requests with JSON bodies (LLM API calls)
     if (request.method !== "POST") {
@@ -150,11 +208,29 @@ export function createRehydraFetch(
       config.provider,
     );
 
-    // Parse request body
+    // Parse request body. Read the raw text first so the audit trail keeps a
+    // byte-faithful copy of the original request.
+    const rawRequestText = await request.text();
     let body: unknown;
     try {
-      body = await request.json();
+      body = JSON.parse(rawRequestText);
     } catch {
+      if (config.audit !== undefined) {
+        await config.audit.write({
+          id: newAuditId(),
+          timestamp: new Date().toISOString(),
+          sessionId: "",
+          provider: provider.name,
+          url: request.url,
+          status: 400,
+          streaming: false,
+          durationMs: Date.now() - startTime,
+          pii: { countsByType: {}, totalEntities: 0 },
+          request: { original: rawRequestText, anonymized: "" },
+          response: { original: "", transformed: "" },
+          error: "Invalid JSON in request body",
+        });
+      }
       return errorResponse(400, "Invalid JSON in request body");
     }
 
@@ -226,9 +302,30 @@ export function createRehydraFetch(
       }
 
       // Forward the anonymized request
+      const anonymizedRequestText = JSON.stringify(anonymizedBody);
       const upstreamRequest = new Request(request, {
-        body: JSON.stringify(anonymizedBody),
+        body: anonymizedRequestText,
       });
+
+      // Build the audit capture (no-op when auditing is disabled).
+      const audit =
+        config.audit !== undefined
+          ? createAuditCapture(
+              config.audit,
+              {
+                id: newAuditId(),
+                sessionId,
+                provider: provider.name,
+                url: request.url,
+                pii: { countsByType, totalEntities },
+                request: {
+                  original: rawRequestText,
+                  anonymized: anonymizedRequestText,
+                },
+              },
+              startTime,
+            )
+          : undefined;
 
       let response: Response;
       try {
@@ -236,6 +333,13 @@ export function createRehydraFetch(
       } catch (err) {
         const msg =
           err instanceof Error ? err.message : "Upstream request failed";
+        await audit?.finish({
+          status: 502,
+          streaming: false,
+          original: "",
+          transformed: "",
+          error: msg,
+        });
         return errorResponse(502, `Upstream LLM unreachable: ${msg}`);
       }
 
@@ -249,9 +353,9 @@ export function createRehydraFetch(
 
       if (isSSE && response.body !== null) {
         if (provider.rehydrateBufferedSSE !== undefined) {
-          return rehydrateBufferedSSEResponse(response, session, provider);
+          return rehydrateBufferedSSEResponse(response, session, provider, audit);
         }
-        return rehydrateSSEResponse(response, session, provider, config);
+        return rehydrateSSEResponse(response, session, provider, config, audit);
       }
 
       // Tool execution loop: when onToolCall is configured and provider
@@ -273,7 +377,7 @@ export function createRehydraFetch(
         );
       }
 
-      return rehydrateJSONResponse(response, session, provider);
+      return rehydrateJSONResponse(response, session, provider, audit);
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Internal proxy error";
@@ -292,6 +396,7 @@ async function rehydrateBufferedSSEResponse(
   response: Response,
   session: AnonymizerSessionImpl,
   provider: LLMContentProvider,
+  audit?: AuditCapture,
 ): Promise<Response> {
   const rawText = await response.text();
   const parser = new SSEParser();
@@ -302,6 +407,12 @@ async function rehydrateBufferedSSEResponse(
   );
 
   const payload = rewritten.map(serializeSSEEvent).join("");
+  await audit?.finish({
+    status: response.status,
+    streaming: true,
+    original: rawText,
+    transformed: payload,
+  });
   return new Response(payload, {
     status: response.status,
     statusText: response.statusText,
@@ -316,6 +427,7 @@ async function rehydrateJSONResponse(
   response: Response,
   session: AnonymizerSessionImpl,
   provider: LLMContentProvider,
+  audit?: AuditCapture,
 ): Promise<Response> {
   // Read raw text so we can fall back to it if JSON parsing fails
   const rawText = await response.text();
@@ -323,6 +435,12 @@ async function rehydrateJSONResponse(
   // Upstream errors (401/404/5xx) carry provider-specific error bodies with
   // no choices to rehydrate — pass them through instead of crashing rebuild.
   if (!response.ok) {
+    await audit?.finish({
+      status: response.status,
+      streaming: false,
+      original: rawText,
+      transformed: rawText,
+    });
     return new Response(rawText, {
       status: response.status,
       statusText: response.statusText,
@@ -335,6 +453,12 @@ async function rehydrateJSONResponse(
     body = JSON.parse(rawText);
   } catch {
     // Upstream returned invalid JSON — pass through unchanged
+    await audit?.finish({
+      status: response.status,
+      streaming: false,
+      original: rawText,
+      transformed: rawText,
+    });
     return new Response(rawText, {
       status: response.status,
       statusText: response.statusText,
@@ -342,7 +466,14 @@ async function rehydrateJSONResponse(
     });
   }
 
-  return rehydrateJSONResponseFromBody(body, response, session, provider);
+  return rehydrateJSONResponseFromBody(
+    body,
+    response,
+    session,
+    provider,
+    audit,
+    rawText,
+  );
 }
 
 /**
@@ -353,6 +484,8 @@ async function rehydrateJSONResponseFromBody(
   response: Response,
   session: AnonymizerSessionImpl,
   provider: LLMContentProvider,
+  audit?: AuditCapture,
+  auditOriginal?: string,
 ): Promise<Response> {
   // Extract response text and rehydrate
   const responseTexts = provider.extractResponseText(body);
@@ -385,7 +518,14 @@ async function rehydrateJSONResponseFromBody(
     }
   }
 
-  return new Response(JSON.stringify(rehydratedBody), {
+  const transformedText = JSON.stringify(rehydratedBody);
+  await audit?.finish({
+    status: response.status,
+    streaming: false,
+    original: auditOriginal ?? transformedText,
+    transformed: transformedText,
+  });
+  return new Response(transformedText, {
     status: response.status,
     statusText: response.statusText,
     headers: sanitizeModifiedResponseHeaders(response.headers),
@@ -568,6 +708,7 @@ function rehydrateSSEResponse(
   session: AnonymizerSessionImpl,
   provider: LLMContentProvider,
   config: RehydraFetchConfig,
+  audit?: AuditCapture,
 ): Response {
   const sseParser = new SSEParser();
   const decoder = new TextDecoder();
@@ -816,9 +957,37 @@ function rehydrateSSEResponse(
     },
   });
 
-  const transformedBody = response.body!.pipeThrough(transformStream);
+  // Without auditing, transform the upstream body directly.
+  if (audit === undefined) {
+    const transformedBody = response.body!.pipeThrough(transformStream);
+    return new Response(transformedBody, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: sanitizeModifiedResponseHeaders(response.headers),
+    });
+  }
 
-  return new Response(transformedBody, {
+  // With auditing, tee both ends so the original upstream stream and the
+  // transformed client stream are each captured without touching the
+  // transform logic. The audit record is written when both drains complete.
+  const [upstreamForTransform, upstreamForAudit] = response.body!.tee();
+  const transformedBody = upstreamForTransform.pipeThrough(transformStream);
+  const [clientBody, transformedForAudit] = transformedBody.tee();
+
+  void (async (): Promise<void> => {
+    const [original, transformed] = await Promise.all([
+      drainStream(upstreamForAudit),
+      drainStream(transformedForAudit),
+    ]);
+    await audit.finish({
+      status: response.status,
+      streaming: true,
+      original,
+      transformed,
+    });
+  })();
+
+  return new Response(clientBody, {
     status: response.status,
     statusText: response.statusText,
     headers: sanitizeModifiedResponseHeaders(response.headers),
