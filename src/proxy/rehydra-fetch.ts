@@ -18,9 +18,20 @@ import { buildTagPrefix } from "../utils/regex.js";
 import { DEFAULT_TAG_FORMAT } from "../types/index.js";
 
 /** Headers to strip from proxied responses — the body is decompressed and may be modified. */
-const STRIP_RESPONSE_HEADERS = ["content-encoding", "content-length"];
+const STRIP_RESPONSE_HEADERS = [
+  "connection",
+  "content-encoding",
+  "content-length",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+];
 
-function stripResponseHeaders(headers: Headers): Headers {
+export function sanitizeModifiedResponseHeaders(headers: Headers): Headers {
   const cleaned = new Headers(headers);
   for (const h of STRIP_RESPONSE_HEADERS) {
     cleaned.delete(h);
@@ -286,7 +297,7 @@ async function rehydrateJSONResponse(
     return new Response(rawText, {
       status: response.status,
       statusText: response.statusText,
-      headers: stripResponseHeaders(response.headers),
+      headers: sanitizeModifiedResponseHeaders(response.headers),
     });
   }
 
@@ -336,7 +347,7 @@ async function rehydrateJSONResponseFromBody(
   return new Response(JSON.stringify(rehydratedBody), {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: sanitizeModifiedResponseHeaders(response.headers),
   });
 }
 
@@ -370,7 +381,7 @@ async function handleToolLoop(
     return new Response(rawText, {
       status: initialResponse.status,
       statusText: initialResponse.statusText,
-      headers: stripResponseHeaders(initialResponse.headers),
+      headers: sanitizeModifiedResponseHeaders(initialResponse.headers),
     });
   }
 
@@ -493,7 +504,7 @@ async function handleToolLoop(
       return new Response(nextRawText, {
         status: nextResponse.status,
         statusText: nextResponse.statusText,
-        headers: stripResponseHeaders(nextResponse.headers),
+        headers: sanitizeModifiedResponseHeaders(nextResponse.headers),
       });
     }
   }
@@ -769,6 +780,6 @@ function rehydrateSSEResponse(
   return new Response(transformedBody, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: sanitizeModifiedResponseHeaders(response.headers),
   });
 }

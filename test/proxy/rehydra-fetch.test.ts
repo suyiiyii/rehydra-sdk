@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createRehydraFetch } from "../../src/proxy/rehydra-fetch.js";
 import { InMemoryKeyProvider } from "../../src/crypto/index.js";
@@ -77,6 +77,7 @@ describe("createRehydraFetch", () => {
   let mockServer: { server: Server; port: number; receivedBodies: unknown[] } | null = null;
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     if (mockServer !== null) {
       await new Promise<void>((resolve) => {
         mockServer!.server.close(() => resolve());
@@ -121,6 +122,48 @@ describe("createRehydraFetch", () => {
     const content = data.choices[0].message.content;
     // The echo response contains the anonymized text, which gets rehydrated
     expect(content).toContain("john@example.com");
+  });
+
+  it("removes stale framing headers from modified JSON responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({
+        choices: [{ message: { role: "assistant", content: "Hello" } }],
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": "7",
+          "Content-Encoding": "gzip",
+          Connection: "keep-alive",
+          "Transfer-Encoding": "chunked",
+          "X-Upstream-Request-Id": "request-123",
+        },
+      },
+    )));
+
+    const rehydraFetch = createRehydraFetch({
+      keyProvider: new InMemoryKeyProvider(),
+      piiStorageProvider: new InMemoryPIIStorageProvider(),
+      provider: "openai",
+    });
+    const response = await rehydraFetch(
+      "https://upstream.example/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "test",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      },
+    );
+
+    expect(response.headers.get("content-length")).toBeNull();
+    expect(response.headers.get("content-encoding")).toBeNull();
+    expect(response.headers.get("connection")).toBeNull();
+    expect(response.headers.get("transfer-encoding")).toBeNull();
+    expect(response.headers.get("x-upstream-request-id")).toBe("request-123");
   });
 
   it("should pass through non-POST requests unchanged", async () => {

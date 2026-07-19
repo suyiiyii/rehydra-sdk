@@ -95,15 +95,33 @@ export function createProxyRequestListener(
         return;
       }
 
+      const abortController = new AbortController();
+      const abortUpstream = (): void => abortController.abort();
+      const abortOnPrematureClose = (): void => {
+        if (!res.writableEnded) abortUpstream();
+      };
+      req.once("aborted", abortUpstream);
+      res.once("close", abortOnPrematureClose);
+
       try {
-        const webRequest = incomingMessageToRequest(req, config.host, config.port);
+        const webRequest = incomingMessageToRequest(
+          req,
+          config.host,
+          config.port,
+          abortController.signal,
+        );
         const webResponse = await config.getHandler()(webRequest);
         await writeResponse(res, webResponse);
       } catch (error) {
-        writeJSON(res, 502, {
-          error: "proxy_error",
-          message: error instanceof Error ? error.message : "Unknown proxy error",
-        });
+        if (!abortController.signal.aborted && !res.headersSent) {
+          writeJSON(res, 502, {
+            error: "proxy_error",
+            message: error instanceof Error ? error.message : "Unknown proxy error",
+          });
+        }
+      } finally {
+        req.off("aborted", abortUpstream);
+        res.off("close", abortOnPrematureClose);
       }
     })();
   };
@@ -187,6 +205,7 @@ export function incomingMessageToRequest(
   req: IncomingMessage,
   host: string,
   port: number,
+  signal?: AbortSignal,
 ): Request {
   const url = `http://${host}:${port}${req.url ?? "/"}`;
   const headers = new Headers();
@@ -210,6 +229,7 @@ export function incomingMessageToRequest(
     method,
     headers,
     body: hasBody ? nodeStreamToReadableStream(req) : undefined,
+    signal,
     // @ts-expect-error - duplex is needed for streaming request bodies
     duplex: hasBody ? "half" : undefined,
   });

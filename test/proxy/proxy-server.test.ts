@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyProxyRoute,
@@ -77,5 +77,42 @@ describe("createProxyRequestListener", () => {
 
     expect((await fetch(`${baseUrl}/v1/models`)).status).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels upstream work when the downstream client disconnects", async () => {
+    let upstreamSignal: AbortSignal | undefined;
+    const handler = vi.fn(async (request: Request) => {
+      upstreamSignal = request.signal;
+      return new Promise<Response>((resolve) => {
+        request.signal.addEventListener(
+          "abort",
+          () => resolve(new Response("cancelled", { status: 499 })),
+          { once: true },
+        );
+      });
+    });
+    server = createServer(createProxyRequestListener({
+      host: "127.0.0.1",
+      port: 0,
+      getHandler: () => handler,
+    }));
+    await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("missing port");
+
+    const clientRequest = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      path: "/v1/messages",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    clientRequest.on("error", () => undefined);
+    clientRequest.end(JSON.stringify({ model: "test", messages: [] }));
+
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    clientRequest.destroy();
+
+    await vi.waitFor(() => expect(upstreamSignal?.aborted).toBe(true));
   });
 });
