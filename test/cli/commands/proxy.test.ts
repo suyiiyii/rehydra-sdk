@@ -408,14 +408,15 @@ describe("proxy command", () => {
       );
     });
 
-    it("should add secret types when --types and --secrets combined", async () => {
+    it("should respect an explicit API_KEY-only policy with secret recognizers", async () => {
       const exitCode = await startAndShutdown(
         "claude",
-        makeOptions({ types: "EMAIL", secrets: true }),
+        makeOptions({ types: "API_KEY", secrets: true }),
       );
       expect(exitCode).toBe(0);
       const config = mockCreateRehydraProxy.mock.calls[0]![0];
-      expect(config.policy).toBeDefined();
+      expect(config.policy?.enabledTypes).toEqual(new Set(["API_KEY"]));
+      expect(config.policy?.regexEnabledTypes).toEqual(new Set(["API_KEY"]));
       expect(config.anonymizer).toMatchObject({ secrets: { enabled: true } });
     });
 

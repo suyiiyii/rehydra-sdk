@@ -12,7 +12,6 @@ import {
   downloadModel,
   type DownloadProgressCallback,
 } from "../../index.js";
-import { SECRET_PII_TYPES } from "../../types/pii-types.js";
 import {
   createRehydraProxy,
   createProxyRequestListener,
@@ -144,16 +143,10 @@ export async function proxyCommand(
   let policy: Partial<AnonymizationPolicy> | undefined;
   if (options.types !== undefined) {
     const enabledTypes = parseTypes(options.types);
-    const policyPartial: Partial<AnonymizationPolicy> = { enabledTypes };
-    if (options.secrets) {
-      const regexEnabledTypes = new Set(enabledTypes);
-      for (const t of SECRET_PII_TYPES) {
-        enabledTypes.add(t);
-        regexEnabledTypes.add(t);
-      }
-      policyPartial.regexEnabledTypes = regexEnabledTypes;
-    }
-    policy = mergePolicy(policyPartial);
+    policy = mergePolicy({
+      enabledTypes,
+      regexEnabledTypes: new Set(enabledTypes),
+    });
   }
 
   // LLM API key — from --api-key flag or LLM_API_KEY env var
