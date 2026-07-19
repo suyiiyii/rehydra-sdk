@@ -68,6 +68,114 @@ export interface NERPrediction {
   modelVersion: string;
 }
 
+export interface NERTextWindow {
+  text: string;
+  start: number;
+  end: number;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+function moveBeforeSurrogateSplit(text: string, index: number): number {
+  if (
+    index > 0 &&
+    index < text.length &&
+    isHighSurrogate(text.charCodeAt(index - 1)) &&
+    isLowSurrogate(text.charCodeAt(index))
+  ) {
+    return index - 1;
+  }
+  return index;
+}
+
+export function createNERTextWindows(
+  text: string,
+  maxLength: number,
+  overlap?: number,
+): NERTextWindow[] {
+  if (text.length === 0) return [];
+  if (!Number.isInteger(maxLength) || maxLength <= 2) {
+    throw new RangeError("NER maxLength must be an integer greater than 2");
+  }
+
+  const windowSize = maxLength - 2;
+  const requestedOverlap = overlap ?? Math.min(64, Math.floor(windowSize / 4));
+  const safeOverlap = Math.max(0, Math.min(requestedOverlap, windowSize - 1));
+  const windows: NERTextWindow[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    let end = Math.min(text.length, start + windowSize);
+    end = moveBeforeSurrogateSplit(text, end);
+    if (end <= start) end = Math.min(text.length, start + windowSize);
+
+    windows.push({ text: text.slice(start, end), start, end });
+    if (end === text.length) break;
+
+    let nextStart = moveBeforeSurrogateSplit(text, end - safeOverlap);
+    if (nextStart <= start) nextStart = end;
+    start = nextStart;
+  }
+
+  return windows;
+}
+
+export function mergeNERWindowSpans(
+  spans: SpanMatch[],
+  text: string,
+): SpanMatch[] {
+  const merged: SpanMatch[] = [];
+  const sorted = [...spans].sort((a, b) => a.start - b.start || a.end - b.end);
+
+  for (const span of sorted) {
+    const overlapping = merged
+      .map((existing, index) => ({ existing, index }))
+      .filter(({ existing }) =>
+        existing.type === span.type &&
+        existing.start < span.end &&
+        span.start < existing.end
+      );
+
+    if (overlapping.length === 0) {
+      merged.push({ ...span, text: text.slice(span.start, span.end) });
+      continue;
+    }
+
+    const candidates = [span, ...overlapping.map(({ existing }) => existing)];
+    candidates.sort((a, b) =>
+      b.confidence - a.confidence ||
+      (b.end - b.start) - (a.end - a.start) ||
+      a.start - b.start
+    );
+    const best = candidates[0]!;
+    for (const { index } of overlapping.sort((a, b) => b.index - a.index)) {
+      merged.splice(index, 1);
+    }
+    merged.push({ ...best, text: text.slice(best.start, best.end) });
+  }
+
+  return merged.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+export function offsetNERWindowSpans(
+  spans: SpanMatch[],
+  window: NERTextWindow,
+  text: string,
+): SpanMatch[] {
+  return spans.map((span) => ({
+    ...span,
+    start: span.start + window.start,
+    end: span.end + window.start,
+    text: text.slice(span.start + window.start, span.end + window.start),
+  }));
+}
+
 /**
  * Default label map for common NER models (CoNLL-style)
  */
@@ -214,31 +322,46 @@ export class NERModel {
 
     const minConfidence = this.getMinConfidence(policy);
 
-    // Primary NER pass on original text
-    let spans = await this.runNERPass(text, text, minConfidence);
+    const windows = createNERTextWindows(text, this.config.maxLength);
+    let spans: SpanMatch[] = [];
 
     // Case fallback: run a second pass on title-cased text to catch lowercase names
     const caseFallback = this.config.caseFallback ?? false;
-    if (caseFallback) {
-      const titleCased = titleCaseWords(text);
-      if (titleCased !== text) {
-        const penalty = this.config.caseFallbackPenalty ?? 0.85;
-        const fallbackSpans = await this.runNERPass(titleCased, text, minConfidence);
+    for (const window of windows) {
+      const windowSpans = await this.runNERPass(
+        window.text,
+        window.text,
+        minConfidence,
+      );
 
-        // Merge only non-overlapping fallback detections with a confidence penalty
-        for (const fallback of fallbackSpans) {
-          const overlaps = spans.some(
-            (primary) => primary.start < fallback.end && fallback.start < primary.end
+      if (caseFallback) {
+        const titleCased = titleCaseWords(window.text);
+        if (titleCased !== window.text) {
+          const penalty = this.config.caseFallbackPenalty ?? 0.85;
+          const fallbackSpans = await this.runNERPass(
+            titleCased,
+            window.text,
+            minConfidence,
           );
-          if (!overlaps) {
-            spans.push({
-              ...fallback,
-              confidence: fallback.confidence * penalty,
-            });
+
+          for (const fallback of fallbackSpans) {
+            const overlaps = windowSpans.some(
+              (primary) => primary.start < fallback.end && fallback.start < primary.end
+            );
+            if (!overlaps) {
+              windowSpans.push({
+                ...fallback,
+                confidence: fallback.confidence * penalty,
+              });
+            }
           }
         }
       }
+
+      spans.push(...offsetNERWindowSpans(windowSpans, window, text));
     }
+
+    spans = mergeNERWindowSpans(spans, text);
 
     // Post-process spans
     spans = cleanupSpanBoundaries(spans, text);
