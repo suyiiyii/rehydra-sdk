@@ -34,15 +34,11 @@ vi.mock("../../../src/index.js", async (importOriginal) => {
 
 import { createServer } from "node:http";
 import { proxyCommand } from "../../../src/cli/commands/proxy.js";
-import {
-  createRehydraProxy,
-  createProxyRequestListener,
-} from "../../../src/proxy/index.js";
+import { createRehydraProxy } from "../../../src/proxy/index.js";
 import { isModelDownloaded, downloadModel } from "../../../src/index.js";
 
 const mockCreateServer = vi.mocked(createServer);
 const mockCreateRehydraProxy = vi.mocked(createRehydraProxy);
-const mockCreateProxyRequestListener = vi.mocked(createProxyRequestListener);
 const mockIsModelDownloaded = vi.mocked(isModelDownloaded);
 const mockDownloadModel = vi.mocked(downloadModel);
 
@@ -59,12 +55,6 @@ function makeOptions(overrides?: Partial<ParsedOptions>): ParsedOptions {
     quiet: true,
     ...overrides,
   };
-}
-
-function createMockProxy(): ReturnType<typeof createRehydraProxy> {
-  return Object.assign(vi.fn(), {
-    initialize: vi.fn().mockResolvedValue(undefined),
-  }) as unknown as ReturnType<typeof createRehydraProxy>;
 }
 
 /**
@@ -104,7 +94,7 @@ describe("proxy command", () => {
     vi.clearAllMocks();
     mockIsModelDownloaded.mockResolvedValue(true);
     mockDownloadModel.mockResolvedValue("/path/to/model");
-    mockCreateRehydraProxy.mockImplementation(() => createMockProxy());
+    mockCreateRehydraProxy.mockReturnValue(vi.fn() as ReturnType<typeof createRehydraProxy>);
     mockServer.listen.mockImplementation((_port: number, _host: string, cb: () => void) => cb());
     mockServer.close.mockImplementation((cb: (err?: Error) => void) => cb());
     mockServer.on.mockReturnValue(mockServer);
@@ -164,15 +154,6 @@ describe("proxy command", () => {
       await expect(
         proxyCommand("claude", makeOptions({ ner: "turbo" })),
       ).rejects.toThrow("Invalid NER mode");
-    });
-
-    it("should reject --require-ner with disabled NER", async () => {
-      await expect(
-        proxyCommand(
-          "claude",
-          makeOptions({ ner: "disabled", "require-ner": true }),
-        ),
-      ).rejects.toThrow("--require-ner cannot be used with --ner disabled");
     });
 
     it("should throw for unknown PII type in --types", async () => {
@@ -607,60 +588,6 @@ describe("proxy command", () => {
       await new Promise((r) => setTimeout(r, 50));
       // Only regex proxy, no NER swap
       expect(mockCreateRehydraProxy).toHaveBeenCalledTimes(1);
-    });
-
-    it("should stay unavailable until required NER is initialized", async () => {
-      let resolveDownloaded!: (downloaded: boolean) => void;
-      mockIsModelDownloaded.mockReturnValue(
-        new Promise<boolean>((resolve) => {
-          resolveDownloaded = resolve;
-        }),
-      );
-
-      const command = proxyCommand(
-        "claude",
-        makeOptions({ ner: "quantized", "require-ner": true }),
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const listenerConfig = mockCreateProxyRequestListener.mock.calls[0]![0];
-      expect(listenerConfig.isReady?.()).toBe(false);
-
-      resolveDownloaded(true);
-      await vi.waitFor(() => {
-        expect(listenerConfig.isReady?.()).toBe(true);
-      });
-
-      process.emit("SIGINT");
-      await expect(command).resolves.toBe(0);
-      const nerProxy = mockCreateRehydraProxy.mock.results[1]!.value;
-      expect(nerProxy.initialize).toHaveBeenCalledOnce();
-    });
-
-    it("should fail closed when required NER initialization fails", async () => {
-      mockIsModelDownloaded.mockRejectedValue(new Error("model corrupt"));
-
-      const command = proxyCommand(
-        "claude",
-        makeOptions({
-          ner: "quantized",
-          "require-ner": true,
-          quiet: false,
-        }),
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-
-      const listenerConfig = mockCreateProxyRequestListener.mock.calls[0]![0];
-      await vi.waitFor(() => {
-        expect(stderrChunks.join("")).toContain(
-          "NER initialization failed: model corrupt",
-        );
-      });
-      expect(listenerConfig.isReady?.()).toBe(false);
-      expect(mockCreateRehydraProxy).toHaveBeenCalledTimes(1);
-
-      process.emit("SIGINT");
-      await expect(command).resolves.toBe(0);
     });
   });
 });

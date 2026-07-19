@@ -39,11 +39,6 @@ export function sanitizeModifiedResponseHeaders(headers: Headers): Headers {
   return cleaned;
 }
 
-export type RehydraFetch = typeof globalThis.fetch & {
-  /** Initialize all anonymization dependencies without forwarding a request. */
-  initialize(): Promise<void>;
-};
-
 /**
  * Returns the length of the longest proper prefix of `tagPrefix` that `text`
  * ends with, or 0 if none. Used to hold back a partially-streamed tag prefix
@@ -104,35 +99,33 @@ function errorResponse(status: number, message: string): Response {
  */
 export function createRehydraFetch(
   config: RehydraFetchConfig,
-): RehydraFetch {
+): typeof globalThis.fetch {
   const anonymizer = createAnonymizer({
     ...config.anonymizer,
     keyProvider: config.keyProvider,
     piiStorageProvider: config.piiStorageProvider,
   });
-  let initialization: Promise<void> | undefined;
+  let initialized = false;
   const tagFormat = config.anonymizer?.tagFormat ?? DEFAULT_TAG_FORMAT;
 
   const getSessionId = config.getSessionId ?? defaultGetSessionId;
   const handleStreaming = config.handleStreaming !== false;
 
-  function ensureInitialized(): Promise<void> {
-    if (initialization === undefined) {
-      initialization = anonymizer.initialize().catch((error: unknown) => {
-        initialization = undefined;
-        throw error;
-      });
+  async function ensureInitialized(): Promise<void> {
+    if (!initialized) {
+      await anonymizer.initialize();
+      initialized = true;
     }
-    return initialization;
   }
 
-  const rehydraFetch = async (
+  return async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
     try {
       await ensureInitialized();
     } catch (err) {
+      initialized = false; // Allow retry on next request
       const msg =
         err instanceof Error ? err.message : "Initialization failed";
       return errorResponse(503, `Rehydra proxy not ready: ${msg}`);
@@ -284,10 +277,6 @@ export function createRehydraFetch(
       return errorResponse(500, msg);
     }
   };
-
-  return Object.assign(rehydraFetch, {
-    initialize: ensureInitialized,
-  }) as RehydraFetch;
 }
 
 /**

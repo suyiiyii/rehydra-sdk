@@ -88,7 +88,6 @@ describe("run()", () => {
     expect(output).toContain("proxy <provider>");
     expect(output).toContain("--port");
     expect(output).toContain("--upstream");
-    expect(output).toContain("--require-ner");
   });
 
   it("should dispatch proxy command (missing provider error)", async () => {
@@ -101,11 +100,5 @@ describe("run()", () => {
     // Validates -p is accepted by parseArgs without a parse error (would throw "Unknown option" otherwise).
     // With no provider, proxyCommand throws CLIError — that's fine, the flag was accepted.
     await expect(run(["proxy", "-p", "9090"])).rejects.toThrow("Missing provider argument");
-  });
-
-  it("should accept --require-ner", async () => {
-    await expect(run(["proxy", "--require-ner"])).rejects.toThrow(
-      "Missing provider argument",
-    );
   });
 });

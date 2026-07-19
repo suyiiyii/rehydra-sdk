@@ -86,16 +86,6 @@ describe("createRehydraFetch", () => {
     }
   });
 
-  it("should expose explicit initialization for readiness checks", async () => {
-    const rehydraFetch = createRehydraFetch({
-      keyProvider: new InMemoryKeyProvider(),
-      piiStorageProvider: new InMemoryPIIStorageProvider(),
-      provider: "openai",
-    });
-
-    await expect(rehydraFetch.initialize()).resolves.toBeUndefined();
-  });
-
   it("should anonymize request and rehydrate non-streaming response", async () => {
     mockServer = await createMockLLMServer();
     const { port, receivedBodies } = mockServer;

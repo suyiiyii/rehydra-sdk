@@ -3,11 +3,8 @@
  * Node.js/Bun only — not available in browser builds.
  */
 
-export { createRehydraFetch, type RehydraFetch } from "./rehydra-fetch.js";
-export {
-  createRehydraProxy,
-  type InitializableRehydraProxy,
-} from "./rehydra-proxy.js";
+export { createRehydraFetch } from "./rehydra-fetch.js";
+export { createRehydraProxy } from "./rehydra-proxy.js";
 export { wrapLLMClient } from "./wrap-client.js";
 export {
   createRehydraProxyServer,

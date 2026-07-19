@@ -7,13 +7,6 @@
 import { createRehydraFetch } from "./rehydra-fetch.js";
 import type { RehydraProxyConfig } from "./types.js";
 
-export type InitializableRehydraProxy = (
-  (request: Request) => Promise<Response>
-) & {
-  /** Initialize anonymization dependencies without forwarding a request. */
-  initialize(): Promise<void>;
-};
-
 const DEFAULT_FORWARD_HEADERS = [
   "authorization",
   "content-type",
@@ -58,14 +51,14 @@ const DEFAULT_FORWARD_HEADERS = [
  */
 export function createRehydraProxy(
   config: RehydraProxyConfig,
-): InitializableRehydraProxy {
+): (request: Request) => Promise<Response> {
   const forwardHeaders = config.forwardHeaders ?? DEFAULT_FORWARD_HEADERS;
   const upstream = config.upstream.replace(/\/$/, ""); // Remove trailing slash
 
   // Create the underlying Rehydra fetch wrapper
   const rehydraFetch = createRehydraFetch(config);
 
-  const proxy = async (request: Request): Promise<Response> => {
+  return async (request: Request): Promise<Response> => {
     // Build upstream URL
     const requestUrl = new URL(request.url);
     let pathname = requestUrl.pathname;
@@ -117,8 +110,4 @@ export function createRehydraProxy(
       duplex: "half",
     });
   };
-
-  return Object.assign(proxy, {
-    initialize: (): Promise<void> => rehydraFetch.initialize(),
-  });
 }

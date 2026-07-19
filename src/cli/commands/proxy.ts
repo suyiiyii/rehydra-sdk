@@ -37,11 +37,6 @@ const PROVIDER_CANONICAL: Record<string, "openai" | "anthropic" | "auto"> = {
   auto: "auto",
 };
 
-type ProxyReadiness =
-  | { state: "loading" }
-  | { state: "ready" }
-  | { state: "failed"; message: string };
-
 function getConnectionHints(
   provider: "openai" | "anthropic" | "auto",
   baseUrl: string,
@@ -144,9 +139,6 @@ export async function proxyCommand(
 
   const storage = new InMemoryPIIStorageProvider();
   const nerMode = validateNerMode(options.ner);
-  if (options["require-ner"] === true && nerMode === "disabled") {
-    throw new CLIError("--require-ner cannot be used with --ner disabled");
-  }
 
   // Policy
   let policy: Partial<AnonymizationPolicy> | undefined;
@@ -192,17 +184,12 @@ export async function proxyCommand(
 
   // Start with regex-only proxy (instant startup)
   let handler = createRehydraProxy(baseProxyConfig);
-  let readiness: ProxyReadiness =
-    options["require-ner"] === true
-      ? { state: "loading" }
-      : { state: "ready" };
 
   // Create HTTP server with swappable handler
   const server = createServer(createProxyRequestListener({
     host,
     port,
     getHandler: () => handler,
-    isReady: () => readiness.state === "ready",
   }));
 
   await new Promise<void>((resolve, reject) => {
@@ -260,25 +247,14 @@ export async function proxyCommand(
 
   // Background: download and warm up NER model, then swap handler
   if (nerEnabled) {
-    void loadNerAndSwap(nerMode, options, baseProxyConfig)
-      .then((nerProxy) => {
+    void loadNerAndSwap(nerMode, options, baseProxyConfig).then((nerProxy) => {
+      if (nerProxy !== null) {
         handler = nerProxy;
-        readiness = { state: "ready" };
         updateNerLine(`  NER        ${green(nerMode)}`);
-      })
-      .catch((error: unknown) => {
-        const message =
-          error instanceof Error ? error.message : "Unknown initialization error";
-        if (options["require-ner"] === true) {
-          readiness = { state: "failed", message };
-          updateNerLine(`  NER        ${yellow("failed")} ${dim("(unavailable)")}`);
-        } else {
-          updateNerLine(`  NER        ${yellow("failed")} ${dim("(regex-only)")}`);
-        }
-        if (!options.quiet) {
-          process.stderr.write(`  NER initialization failed: ${message}\n`);
-        }
-      });
+      } else {
+        updateNerLine(`  NER        ${yellow("failed")} ${dim("(regex-only)")}`);
+      }
+    });
   }
 
   // Wait for shutdown signal
@@ -305,43 +281,47 @@ export async function proxyCommand(
 
 /**
  * Downloads the NER model (if needed), creates a NER-enabled proxy, and returns it.
- * Throws on failure so the caller can choose fail-open or fail-closed behavior.
+ * Returns null on failure (proxy continues with regex-only).
  */
 async function loadNerAndSwap(
   nerMode: NERConfig["mode"],
   options: ParsedOptions,
   baseConfig: RehydraProxyConfig,
-): Promise<ReturnType<typeof createRehydraProxy>> {
+): Promise<ReturnType<typeof createRehydraProxy> | null> {
   const modelMode = nerMode === "standard" ? "standard" : "quantized";
 
-  // Download model if not cached
-  const alreadyDownloaded = await isModelDownloaded(modelMode);
-  if (!alreadyDownloaded) {
-    if (!options.quiet) {
-      process.stderr.write(`  ${dim(`Downloading NER model (${modelMode})...`)}\n`);
-    }
-    const onProgress: DownloadProgressCallback = (progress) => {
+  try {
+    // Download model if not cached
+    const alreadyDownloaded = await isModelDownloaded(modelMode);
+    if (!alreadyDownloaded) {
       if (!options.quiet) {
-        writeProgress(formatProgress(progress.file, progress.percent));
+        process.stderr.write(`  ${dim(`Downloading NER model (${modelMode})...`)}\n`);
       }
-    };
-    await downloadModel(modelMode, onProgress);
-    clearProgress();
-  }
+      const onProgress: DownloadProgressCallback = (progress) => {
+        if (!options.quiet) {
+          writeProgress(formatProgress(progress.file, progress.percent));
+        }
+      };
+      await downloadModel(modelMode, onProgress);
+      clearProgress();
+    }
 
-  // Create and initialize the NER-enabled proxy before marking it ready.
-  const nerProxy = createRehydraProxy({
-    ...baseConfig,
-    anonymizer: {
-      ...baseConfig.anonymizer,
-      ner: {
-        mode: nerMode,
-        autoDownload: false, // already downloaded
+    // Create NER-enabled proxy
+    const nerProxy = createRehydraProxy({
+      ...baseConfig,
+      anonymizer: {
+        ...baseConfig.anonymizer,
+        ner: {
+          mode: nerMode,
+          autoDownload: false, // already downloaded
+        },
       },
-    },
-  });
-  await nerProxy.initialize();
-  return nerProxy;
+    });
+
+    return nerProxy;
+  } catch {
+    return null;
+  }
 }
 
 // --- helpers ---
