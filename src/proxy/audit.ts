@@ -13,7 +13,6 @@
 import { appendFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { availableParallelism } from "node:os";
 import { basename, dirname, join } from "node:path";
 import zlib from "node:zlib";
 
@@ -170,13 +169,13 @@ export class JsonlAuditSink implements AuditSink {
   private compressInBackground(rawPath: string): void {
     const task = (async () => {
       const zstPath = `${rawPath}.zst`;
+      // Single-threaded on purpose: ZSTD_c_nbWorkers > 0 makes the streaming
+      // compressor fail with "stream.push() after EOF" on multi-chunk input
+      // in Node 22 (fixed in 24). Background compression can afford it.
       await pipeline(
         createReadStream(rawPath),
         zlib.createZstdCompress({
-          params: {
-            [zlib.constants.ZSTD_c_compressionLevel]: 19,
-            [zlib.constants.ZSTD_c_nbWorkers]: availableParallelism(),
-          },
+          params: { [zlib.constants.ZSTD_c_compressionLevel]: 19 },
         }),
         createWriteStream(zstPath),
       );
@@ -198,10 +197,11 @@ export class JsonlAuditSink implements AuditSink {
         );
       }
       await unlink(rawPath);
-    })().catch((err) => {
+    })().catch(async (err) => {
       // Keep the raw file on any failure; it is retried by the next sweep.
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[rehydra] audit compress failed for ${rawPath}: ${msg}\n`);
+      await unlink(`${rawPath}.zst`).catch(() => {});
     });
     this.compressions.add(task);
     void task.finally(() => this.compressions.delete(task));
