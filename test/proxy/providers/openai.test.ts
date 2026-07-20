@@ -95,6 +95,54 @@ describe("OpenAIProvider", () => {
       const texts = provider.extractRequestText({ model: "gpt-4" });
       expect(texts).toEqual([]);
     });
+
+    it("extracts content text parts before historical tool call arguments", () => {
+      const body = {
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "system prompt" },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "first text part" },
+              { type: "image_url", image_url: { url: "data:..." } },
+              { type: "text", text: "second text part" },
+            ],
+            tool_calls: [
+              { function: { arguments: '{"first":true}' } },
+              { function: { arguments: '{"second":true}' } },
+            ],
+          },
+          {
+            role: "assistant",
+            content: "third text part",
+            tool_calls: [{ function: { arguments: '{"third":true}' } }],
+          },
+        ],
+      };
+
+      expect(provider.extractRequestText(body)).toEqual([
+        "system prompt",
+        "first text part",
+        "second text part",
+        '{"first":true}',
+        '{"second":true}',
+        "third text part",
+        '{"third":true}',
+      ]);
+    });
+
+    it("ignores missing and malformed historical tool calls", () => {
+      const body = {
+        model: "gpt-4",
+        messages: [
+          { role: "assistant", content: null },
+          { role: "assistant", content: [], tool_calls: [null, {}, { function: null }, { function: {} }, { function: { arguments: 42 } }, { function: { arguments: '{"valid":true}' } }] },
+        ],
+      };
+
+      expect(provider.extractRequestText(body)).toEqual(['{"valid":true}']);
+    });
   });
 
   describe("rebuildRequestBody", () => {
@@ -124,6 +172,50 @@ describe("OpenAIProvider", () => {
 
       provider.rebuildRequestBody(body, ["modified"]);
       expect(body.messages[0].content).toBe("original");
+    });
+
+    it("rebuilds historical tool call arguments in extraction order without mutating the original", () => {
+      const body = {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            content: "original content",
+            tool_calls: [
+              { function: { arguments: '{"secret":"original"}' } },
+              { function: {} },
+              { function: { arguments: '{"second":"original"}' } },
+            ],
+          },
+        ],
+      };
+
+      const result = provider.rebuildRequestBody(body, [
+        "anonymized content",
+        '{"secret":"anonymized"}',
+        '{"second":"anonymized"}',
+      ]) as any;
+
+      expect(result.messages[0].content).toBe("anonymized content");
+      expect(result.messages[0].tool_calls[0].function.arguments).toBe('{"secret":"anonymized"}');
+      expect(result.messages[0].tool_calls[1].function.arguments).toBeUndefined();
+      expect(result.messages[0].tool_calls[2].function.arguments).toBe('{"second":"anonymized"}');
+      expect(body.messages[0].content).toBe("original content");
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe('{"secret":"original"}');
+      expect(body.messages[0].tool_calls[2].function.arguments).toBe('{"second":"original"}');
+    });
+
+    it("leaves missing and malformed historical tool calls untouched", () => {
+      const body = {
+        model: "gpt-4",
+        messages: [
+          { role: "assistant", content: null, tool_calls: [null, {}, { function: null }, { function: {} }, { function: { arguments: 42 } }, { function: { arguments: "original" } }] },
+        ],
+      };
+
+      const result = provider.rebuildRequestBody(body, ["anonymized"]) as any;
+      expect(result.messages[0].tool_calls[5].function.arguments).toBe("anonymized");
+      expect(body.messages[0].tool_calls[5].function.arguments).toBe("original");
     });
   });
 

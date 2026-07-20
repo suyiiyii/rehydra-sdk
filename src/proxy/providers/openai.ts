@@ -14,6 +14,7 @@ interface OpenAIMessage {
   role: string;
   content: string | OpenAIContentPart[] | null;
   name?: string;
+  tool_calls?: unknown;
 }
 
 interface OpenAIContentPart {
@@ -72,6 +73,17 @@ interface OpenAIStreamChunk {
   [key: string]: unknown;
 }
 
+function hasStringToolCallArguments(
+  toolCall: unknown,
+): toolCall is { function: { arguments: string } } {
+  if (typeof toolCall !== "object" || toolCall === null) return false;
+
+  const functionCall = (toolCall as { function?: unknown }).function;
+  if (typeof functionCall !== "object" || functionCall === null) return false;
+
+  return typeof (functionCall as { arguments?: unknown }).arguments === "string";
+}
+
 export class OpenAIProvider implements LLMContentProvider {
   readonly name = "openai";
 
@@ -100,7 +112,17 @@ export class OpenAIProvider implements LLMContentProvider {
           }
         }
       }
+
+      const toolCalls = message.tool_calls;
+      if (Array.isArray(toolCalls)) {
+        for (const toolCall of toolCalls) {
+          if (hasStringToolCallArguments(toolCall)) {
+            texts.push(toolCall.function.arguments);
+          }
+        }
+      }
     }
+
     return texts;
   }
 
@@ -118,7 +140,17 @@ export class OpenAIProvider implements LLMContentProvider {
           }
         }
       }
+
+      const toolCalls = message.tool_calls;
+      if (Array.isArray(toolCalls)) {
+        for (const toolCall of toolCalls) {
+          if (hasStringToolCallArguments(toolCall)) {
+            toolCall.function.arguments = anonymizedTexts[idx++]!;
+          }
+        }
+      }
     }
+
     return req;
   }
 

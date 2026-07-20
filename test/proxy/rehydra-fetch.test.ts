@@ -124,6 +124,52 @@ describe("createRehydraFetch", () => {
     expect(content).toContain("john@example.com");
   });
 
+  it("anonymizes historical OpenAI tool call arguments before forwarding upstream", async () => {
+    mockServer = await createMockLLMServer();
+    const { port, receivedBodies } = mockServer;
+    const fakeApiKey = "sk-abcdefghijklmnopqrstuvwxyz";
+
+    const rehydraFetch = createRehydraFetch({
+      keyProvider: new InMemoryKeyProvider(),
+      piiStorageProvider: new InMemoryPIIStorageProvider(),
+      provider: "openai",
+      anonymizer: { secrets: { enabled: true } },
+      getSessionId: async () => "tool-call-secret-session",
+    });
+
+    const response = await rehydraFetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "test",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "use_key",
+                  arguments: JSON.stringify({ api_key: fakeApiKey }),
+                },
+              },
+            ],
+          },
+          { role: "user", content: "Continue" },
+        ],
+      }),
+    });
+
+    expect(response.ok).toBe(true);
+    const sentBody = receivedBodies[0] as any;
+    const sentToolMessage = (sentBody.messages as any[]).find((message: any) => Array.isArray(message.tool_calls));
+    const sentArguments = sentToolMessage.tool_calls[0].function.arguments;
+    expect(sentArguments).toContain('<PII type="API_KEY"');
+    expect(sentArguments).not.toContain(fakeApiKey);
+  });
+
   it("removes stale framing headers from modified JSON responses", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(
       JSON.stringify({
