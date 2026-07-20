@@ -89,28 +89,58 @@ function transformToolCallArgumentString(
   transform: (text: string) => string,
 ): string {
   try {
-    const parsed = JSON.parse(argumentsText) as unknown;
-    return JSON.stringify(transformJSONStringLeaves(parsed, transform));
+    JSON.parse(argumentsText);
+    return transformJSONStringValueTokens(argumentsText, transform);
   } catch {
     return transform(argumentsText);
   }
 }
 
-function transformJSONStringLeaves(
-  value: unknown,
+function transformJSONStringValueTokens(
+  json: string,
   transform: (text: string) => string,
-): unknown {
-  if (typeof value === "string") return transform(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => transformJSONStringLeaves(item, transform));
-  }
-  if (typeof value === "object" && value !== null) {
-    const objectValue = value as Record<string, unknown>;
-    for (const key of Object.keys(objectValue)) {
-      objectValue[key] = transformJSONStringLeaves(objectValue[key], transform);
+): string {
+  const output: string[] = [];
+  let cursor = 0;
+
+  while (cursor < json.length) {
+    const start = json.indexOf('"', cursor);
+    if (start === -1) {
+      output.push(json.slice(cursor));
+      break;
     }
+
+    output.push(json.slice(cursor, start));
+    let end = start + 1;
+    while (end < json.length) {
+      if (json[end] === "\\") {
+        end += 2;
+      } else if (json[end] === '"') {
+        end++;
+        break;
+      } else {
+        end++;
+      }
+    }
+
+    const token = json.slice(start, end);
+    let afterToken = end;
+    while (isJSONWhitespace(json[afterToken])) afterToken++;
+
+    if (json[afterToken] === ":") {
+      output.push(token);
+    } else {
+      const value = JSON.parse(token) as string;
+      output.push(JSON.stringify(transform(value)));
+    }
+    cursor = end;
   }
-  return value;
+
+  return output.join("");
+}
+
+function isJSONWhitespace(char: string | undefined): boolean {
+  return char === " " || char === "\n" || char === "\r" || char === "\t";
 }
 
 export class OpenAIProvider implements LLMContentProvider {

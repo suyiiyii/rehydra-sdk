@@ -246,6 +246,69 @@ describe("OpenAIProvider", () => {
       expect(body.messages[0].tool_calls[2].function.arguments).toBe(JSON.stringify({ third: "third original" }));
     });
 
+    it("preserves valid JSON lexical primitives while rebuilding string leaves", () => {
+      const fakeApiKey = "sk-abcdefghijklmnopqrstuvwxyz";
+      const placeholder = '<PII type="API_KEY" id="1"/>';
+      const argumentsText = `{
+  "\\u0061pi_key" : "${fakeApiKey}",
+  "large":9007199254740993,
+  "negative_zero":-0,
+  "exponent":1.2300e+04,
+  "decimal":0.0100,
+  "enabled":true,
+  "empty":null,
+  "escaped":"\\u0061\\n"
+}`;
+      const body = {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ function: { arguments: argumentsText } }],
+          },
+        ],
+      };
+
+      expect(provider.extractRequestText(body)).toEqual([fakeApiKey, "a\n"]);
+
+      const result = provider.rebuildRequestBody(body, [
+        placeholder,
+        "anonymized\nvalue",
+      ]) as any;
+      const expectedArguments = argumentsText
+        .replace(`"${fakeApiKey}"`, JSON.stringify(placeholder))
+        .replace('"\\u0061\\n"', JSON.stringify("anonymized\nvalue"));
+
+      expect(result.messages[0].tool_calls[0].function.arguments).toBe(expectedArguments);
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe(argumentsText);
+    });
+
+    it("redacts deeply nested JSON string values without whole-string fallback", () => {
+      const fakeApiKey = "sk-abcdefghijklmnopqrstuvwxyz";
+      const placeholder = '<PII type="API_KEY" id="1"/>';
+      const depth = 5000;
+      const argumentsText = `${"[".repeat(depth)}${JSON.stringify(fakeApiKey)}${"]".repeat(depth)}`;
+      const body = {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ function: { arguments: argumentsText } }],
+          },
+        ],
+      };
+
+      expect(provider.extractRequestText(body)).toEqual([fakeApiKey]);
+
+      const result = provider.rebuildRequestBody(body, [placeholder]) as any;
+      const rebuiltArguments = result.messages[0].tool_calls[0].function.arguments;
+      expect(rebuiltArguments).not.toContain(fakeApiKey);
+      expect(rebuiltArguments).toContain(JSON.stringify(placeholder));
+      expect(() => JSON.parse(rebuiltArguments)).not.toThrow();
+    });
+
     it("leaves missing and malformed historical tool calls untouched", () => {
       const body = {
         model: "gpt-4",
