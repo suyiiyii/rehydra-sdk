@@ -166,8 +166,11 @@ describe("createRehydraFetch", () => {
     const sentBody = receivedBodies[0] as any;
     const sentToolMessage = (sentBody.messages as any[]).find((message: any) => Array.isArray(message.tool_calls));
     const sentArguments = sentToolMessage.tool_calls[0].function.arguments;
-    expect(sentArguments).toContain('<PII type="API_KEY"');
+    const parsedArguments = JSON.parse(sentArguments);
+    expect(sentArguments).toContain("API_KEY");
     expect(sentArguments).not.toContain(fakeApiKey);
+    expect(parsedArguments.api_key).toContain('<PII type="API_KEY"');
+    expect(parsedArguments.api_key).not.toContain(fakeApiKey);
   });
 
   it("removes stale framing headers from modified JSON responses", async () => {

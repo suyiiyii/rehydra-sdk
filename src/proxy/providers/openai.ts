@@ -84,6 +84,35 @@ function hasStringToolCallArguments(
   return typeof (functionCall as { arguments?: unknown }).arguments === "string";
 }
 
+function transformToolCallArgumentString(
+  argumentsText: string,
+  transform: (text: string) => string,
+): string {
+  try {
+    const parsed = JSON.parse(argumentsText) as unknown;
+    return JSON.stringify(transformJSONStringLeaves(parsed, transform));
+  } catch {
+    return transform(argumentsText);
+  }
+}
+
+function transformJSONStringLeaves(
+  value: unknown,
+  transform: (text: string) => string,
+): unknown {
+  if (typeof value === "string") return transform(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => transformJSONStringLeaves(item, transform));
+  }
+  if (typeof value === "object" && value !== null) {
+    const objectValue = value as Record<string, unknown>;
+    for (const key of Object.keys(objectValue)) {
+      objectValue[key] = transformJSONStringLeaves(objectValue[key], transform);
+    }
+  }
+  return value;
+}
+
 export class OpenAIProvider implements LLMContentProvider {
   readonly name = "openai";
 
@@ -117,7 +146,13 @@ export class OpenAIProvider implements LLMContentProvider {
       if (Array.isArray(toolCalls)) {
         for (const toolCall of toolCalls) {
           if (hasStringToolCallArguments(toolCall)) {
-            texts.push(toolCall.function.arguments);
+            transformToolCallArgumentString(
+              toolCall.function.arguments,
+              (text) => {
+                texts.push(text);
+                return text;
+              },
+            );
           }
         }
       }
@@ -145,7 +180,10 @@ export class OpenAIProvider implements LLMContentProvider {
       if (Array.isArray(toolCalls)) {
         for (const toolCall of toolCalls) {
           if (hasStringToolCallArguments(toolCall)) {
-            toolCall.function.arguments = anonymizedTexts[idx++]!;
+            toolCall.function.arguments = transformToolCallArgumentString(
+              toolCall.function.arguments,
+              () => anonymizedTexts[idx++]!,
+            );
           }
         }
       }

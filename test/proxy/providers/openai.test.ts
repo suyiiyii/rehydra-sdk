@@ -96,7 +96,7 @@ describe("OpenAIProvider", () => {
       expect(texts).toEqual([]);
     });
 
-    it("extracts content text parts before historical tool call arguments", () => {
+    it("extracts content text parts before JSON tool argument string leaves", () => {
       const body = {
         model: "gpt-4o",
         messages: [
@@ -109,14 +109,22 @@ describe("OpenAIProvider", () => {
               { type: "text", text: "second text part" },
             ],
             tool_calls: [
-              { function: { arguments: '{"first":true}' } },
-              { function: { arguments: '{"second":true}' } },
+              {
+                function: {
+                  arguments: JSON.stringify({
+                    first: "first argument",
+                    nested: { second: "second argument" },
+                    values: ["third argument", 7, false, null],
+                  }),
+                },
+              },
+              { function: { arguments: JSON.stringify({ last: "last argument" }) } },
             ],
           },
           {
             role: "assistant",
             content: "third text part",
-            tool_calls: [{ function: { arguments: '{"third":true}' } }],
+            tool_calls: [{ function: { arguments: JSON.stringify({ fourth: "fourth argument" }) } }],
           },
         ],
       };
@@ -125,10 +133,12 @@ describe("OpenAIProvider", () => {
         "system prompt",
         "first text part",
         "second text part",
-        '{"first":true}',
-        '{"second":true}',
+        "first argument",
+        "second argument",
+        "third argument",
+        "last argument",
         "third text part",
-        '{"third":true}',
+        "fourth argument",
       ]);
     });
 
@@ -137,11 +147,26 @@ describe("OpenAIProvider", () => {
         model: "gpt-4",
         messages: [
           { role: "assistant", content: null },
-          { role: "assistant", content: [], tool_calls: [null, {}, { function: null }, { function: {} }, { function: { arguments: 42 } }, { function: { arguments: '{"valid":true}' } }] },
+          { role: "assistant", content: [], tool_calls: [null, {}, { function: null }, { function: {} }, { function: { arguments: 42 } }, { function: { arguments: '{"valid":"true"}' } }] },
         ],
       };
 
-      expect(provider.extractRequestText(body)).toEqual(['{"valid":true}']);
+      expect(provider.extractRequestText(body)).toEqual(["true"]);
+    });
+
+    it("falls back to the complete string for malformed JSON tool arguments", () => {
+      const body = {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{ function: { arguments: "not-json secret value" } }],
+          },
+        ],
+      };
+
+      expect(provider.extractRequestText(body)).toEqual(["not-json secret value"]);
     });
   });
 
@@ -174,7 +199,7 @@ describe("OpenAIProvider", () => {
       expect(body.messages[0].content).toBe("original");
     });
 
-    it("rebuilds historical tool call arguments in extraction order without mutating the original", () => {
+    it("rebuilds JSON tool argument string leaves in extraction order without mutating the original", () => {
       const body = {
         model: "gpt-4",
         messages: [
@@ -182,9 +207,16 @@ describe("OpenAIProvider", () => {
             role: "assistant",
             content: "original content",
             tool_calls: [
-              { function: { arguments: '{"secret":"original"}' } },
+              {
+                function: {
+                  arguments: JSON.stringify({
+                    command: "echo original",
+                    nested: { values: ["second original", 42, false, null] },
+                  }),
+                },
+              },
               { function: {} },
-              { function: { arguments: '{"second":"original"}' } },
+              { function: { arguments: JSON.stringify({ third: "third original" }) } },
             ],
           },
         ],
@@ -192,17 +224,26 @@ describe("OpenAIProvider", () => {
 
       const result = provider.rebuildRequestBody(body, [
         "anonymized content",
-        '{"secret":"anonymized"}',
-        '{"second":"anonymized"}',
+        'echo <PII type="API_KEY" id="1"/>',
+        "second anonymized",
+        "third anonymized",
       ]) as any;
 
       expect(result.messages[0].content).toBe("anonymized content");
-      expect(result.messages[0].tool_calls[0].function.arguments).toBe('{"secret":"anonymized"}');
+      expect(JSON.parse(result.messages[0].tool_calls[0].function.arguments)).toEqual({
+        command: 'echo <PII type="API_KEY" id="1"/>',
+        nested: { values: ["second anonymized", 42, false, null] },
+      });
       expect(result.messages[0].tool_calls[1].function.arguments).toBeUndefined();
-      expect(result.messages[0].tool_calls[2].function.arguments).toBe('{"second":"anonymized"}');
+      expect(JSON.parse(result.messages[0].tool_calls[2].function.arguments)).toEqual({
+        third: "third anonymized",
+      });
       expect(body.messages[0].content).toBe("original content");
-      expect(body.messages[0].tool_calls[0].function.arguments).toBe('{"secret":"original"}');
-      expect(body.messages[0].tool_calls[2].function.arguments).toBe('{"second":"original"}');
+      expect(body.messages[0].tool_calls[0].function.arguments).toBe(JSON.stringify({
+        command: "echo original",
+        nested: { values: ["second original", 42, false, null] },
+      }));
+      expect(body.messages[0].tool_calls[2].function.arguments).toBe(JSON.stringify({ third: "third original" }));
     });
 
     it("leaves missing and malformed historical tool calls untouched", () => {
